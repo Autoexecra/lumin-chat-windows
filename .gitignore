@@ -1,0 +1,25 @@
+# Build artifacts
+bin/
+obj/
+output/
+TestResults/
+
+# IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

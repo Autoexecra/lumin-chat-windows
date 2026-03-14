@@ -1,0 +1,41 @@
+<Window x:Class="LuminChatWin.App.LlmConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LLM 配置"
+        Width="1180"
+        Height="820"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="20" Margin="0,0,0,16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="模型配置" FontSize="24" FontWeight="SemiBold"/>
+                    <TextBlock Text="支持新增和删除模型等级。删除后会自动重排 level 编号，保证对话窗口里的模型选择保持连续。" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+                    <Button Content="新增模型" Click="AddModel_Click"/>
+                    <Button Content="删除当前模型" Style="{StaticResource SubtleButtonStyle}" Click="RemoveModel_Click" Margin="0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="20">
+            <TabControl x:Name="ModelTabControl" TabStripPlacement="Left"/>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="保存" Click="Save_Click"/>
+            <Button Content="关闭" Style="{StaticResource SubtleButtonStyle}" Click="Close_Click" Margin="0"/>
+        </StackPanel>
+    </Grid>
+</Window>
