@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 
 namespace LuminChatWin.App;
@@ -13,6 +14,9 @@ public partial class MainWindow : Window
         _runtime = runtime;
         InitializeComponent();
         _runtime.ConfigChanged += Runtime_ConfigChanged;
+        ThemeComboBox.ItemsSource = ThemeManager.Themes;
+        ThemeComboBox.DisplayMemberPath = nameof(ThemePalette.Name);
+        ThemeComboBox.SelectedValuePath = nameof(ThemePalette.Id);
         RefreshSummary();
     }
 
@@ -23,6 +27,7 @@ public partial class MainWindow : Window
 
     private void RefreshSummary()
     {
+        ThemeComboBox.SelectedValue = _runtime.Config.App.ThemeId;
         WorkspaceTextBlock.Text = _runtime.WorkspaceRoot;
         ConfigSummaryTextBlock.Text = $"默认模型级别: level {_runtime.Config.App.DefaultModelLevel}\n" +
                                       $"当前主题: {ThemeManager.GetTheme(_runtime.Config.App.ThemeId).Name}\n" +
@@ -35,6 +40,23 @@ public partial class MainWindow : Window
                                       $"辅助服务器: {(_runtime.Config.SecondaryServer.Enabled ? "已启用" : "未启用")}\n" +
                                       $"许可证: {(_runtime.Config.License.Enabled ? "启用校验" : "关闭")}\n" +
                                       $"命令策略模式: {_runtime.Config.CommandPolicy.Mode}";
+    }
+
+    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded || ThemeComboBox.SelectedValue is not string themeId || string.IsNullOrWhiteSpace(themeId))
+        {
+            return;
+        }
+
+        if (string.Equals(_runtime.Config.App.ThemeId, themeId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var config = _runtime.ConfigService.LoadOrCreate();
+        config.App.ThemeId = themeId;
+        _runtime.SaveConfig(config);
     }
 
     private void OpenChatWindow_Click(object sender, RoutedEventArgs e)

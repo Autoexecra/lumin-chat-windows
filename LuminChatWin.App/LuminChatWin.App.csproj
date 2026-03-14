@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LuminChatWin.Core\LuminChatWin.Core.csproj" />
+    <Resource Include="..\Lumin-Chat图标.png" Link="Assets\Lumin-Chat图标.png" />
   </ItemGroup>
 
   <PropertyGroup>
