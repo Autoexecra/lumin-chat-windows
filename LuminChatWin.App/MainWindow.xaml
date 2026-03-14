@@ -80,7 +80,8 @@
                         <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="18">
                             <StackPanel>
                                 <TextBlock Text="增强能力" FontWeight="SemiBold" FontSize="18"/>
-                                <TextBlock Text="补充了批量任务入口、工作区切换和可视化工具轨迹，方便比终端版更稳地操作。" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text="补充了批量任务入口、工作区切换、可视化工具轨迹，以及新的串口控制与终端编排窗口。" Margin="0,8,0,12" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                <Button Content="串口控制 / Terminal" Click="OpenTerminalControl_Click"/>
                             </StackPanel>
                         </Border>
                     </UniformGrid>

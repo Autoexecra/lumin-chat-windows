@@ -8,6 +8,7 @@ public partial class MainWindow : Window
 {
     private readonly AppRuntime _runtime;
     private ChatWindow? _chatWindow;
+    private TerminalControlWindow? _terminalWindow;
 
     public MainWindow(AppRuntime runtime)
     {
@@ -98,6 +99,22 @@ public partial class MainWindow : Window
         {
             _runtime.SetWorkspaceRoot(dialog.FolderName);
             RefreshSummary();
+        }
+    }
+
+    private void OpenTerminalControl_Click(object sender, RoutedEventArgs e)
+    {
+        if (_terminalWindow is null || !_terminalWindow.IsLoaded)
+        {
+            _terminalWindow = new TerminalControlWindow(_runtime)
+            {
+                Owner = this,
+            };
+            _terminalWindow.Show();
+        }
+        else
+        {
+            _terminalWindow.Activate();
         }
     }
 }

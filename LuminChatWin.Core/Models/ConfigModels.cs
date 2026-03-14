@@ -34,6 +34,9 @@ public sealed class AppConfig
     [JsonPropertyName("prompts")]
     public PromptConfig Prompts { get; set; } = new();
 
+    [JsonPropertyName("terminal")]
+    public TerminalFeatureConfig Terminal { get; set; } = new();
+
     [JsonPropertyName("ai")]
     public Dictionary<string, AiModelConfig> Ai { get; set; } = CreateDefaultAi();
 
@@ -175,6 +178,72 @@ public sealed class PromptConfig
 
     [JsonPropertyName("selected_user_prompt_file")]
     public string SelectedUserPromptFile { get; set; } = string.Empty;
+}
+
+public sealed class TerminalFeatureConfig
+{
+    [JsonPropertyName("default_powershell_program")]
+    public string DefaultPowershellProgram { get; set; } = "pwsh";
+
+    [JsonPropertyName("default_powershell_args")]
+    public string DefaultPowershellArgs { get; set; } = "-NoLogo -NoProfile";
+
+    [JsonPropertyName("history_max_entries")]
+    public int HistoryMaxEntries { get; set; } = 4000;
+
+    [JsonPropertyName("recent_output_max_lines")]
+    public int RecentOutputMaxLines { get; set; } = 600;
+
+    [JsonPropertyName("exec_api")]
+    public TerminalExecApiConfig ExecApi { get; set; } = new();
+
+    [JsonPropertyName("serial_ssh_bridge")]
+    public TerminalSerialBridgeConfig SerialSshBridge { get; set; } = new();
+
+    [JsonPropertyName("agent")]
+    public TerminalAgentConfig Agent { get; set; } = new();
+}
+
+public sealed class TerminalExecApiConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("bind_host")]
+    public string BindHost { get; set; } = "127.0.0.1";
+
+    [JsonPropertyName("port")]
+    public int Port { get; set; } = 8765;
+
+    [JsonPropertyName("default_timeout_s")]
+    public double DefaultTimeoutSeconds { get; set; } = 15;
+}
+
+public sealed class TerminalSerialBridgeConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("bind_host")]
+    public string BindHost { get; set; } = "127.0.0.1";
+
+    [JsonPropertyName("port_prefix")]
+    public string PortPrefix { get; set; } = "22";
+
+    [JsonPropertyName("port_overrides")]
+    public Dictionary<string, int> PortOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class TerminalAgentConfig
+{
+    [JsonPropertyName("default_model_level")]
+    public int DefaultModelLevel { get; set; } = 1;
+
+    [JsonPropertyName("auto_execute")]
+    public bool AutoExecute { get; set; }
+
+    [JsonPropertyName("approval_mode")]
+    public string ApprovalMode { get; set; } = "suggest";
 }
 
 public sealed class CommandPolicyConfig

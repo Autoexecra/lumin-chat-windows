@@ -28,5 +28,11 @@ public partial class App : Application
 		MainWindow = mainWindow;
 		mainWindow.Show();
 	}
+
+	protected override void OnExit(ExitEventArgs e)
+	{
+		Runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		base.OnExit(e);
+	}
 }
 

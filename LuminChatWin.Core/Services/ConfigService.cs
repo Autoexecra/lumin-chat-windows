@@ -96,6 +96,7 @@ public sealed class ConfigService
         target.BuildServer = source.BuildServer ?? target.BuildServer;
         target.Log = source.Log ?? target.Log;
         target.Prompts = source.Prompts ?? target.Prompts;
+        target.Terminal = source.Terminal ?? target.Terminal;
         if (source.Ai.Count > 0)
         {
             foreach (var (key, model) in source.Ai)

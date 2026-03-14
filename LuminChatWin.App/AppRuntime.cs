@@ -5,7 +5,7 @@ using System.Windows;
 
 namespace LuminChatWin.App;
 
-public sealed class AppRuntime
+public sealed class AppRuntime : IAsyncDisposable
 {
     private readonly OpenAiCompatibleChatClient _chatClient = new();
 
@@ -15,7 +15,11 @@ public sealed class AppRuntime
         Config = ConfigService.LoadOrCreate();
         WorkspaceRoot = ConfigService.ExpandPath(workspaceRoot);
         Directory.CreateDirectory(WorkspaceRoot);
+        TerminalSessions = new TerminalSessionManager(() => Config.Terminal);
+        TerminalApiServer = new TerminalApiServer(TerminalSessions, () => Config.Terminal);
+        TerminalAgent = new TerminalAgentService(_chatClient, () => Config, TerminalSessions);
         EnsurePromptLibrary();
+        _ = EnsureTerminalApiStateAsync();
     }
 
     public event EventHandler? ConfigChanged;
@@ -25,6 +29,12 @@ public sealed class AppRuntime
     public AppConfig Config { get; private set; }
 
     public string WorkspaceRoot { get; private set; }
+
+    public TerminalSessionManager TerminalSessions { get; }
+
+    public TerminalApiServer TerminalApiServer { get; }
+
+    public TerminalAgentService TerminalAgent { get; }
 
     public ChatAgent CreateAgent(string? sessionIdOrPath = null, string? workdir = null, Func<string, string, bool>? confirmCallback = null)
     {
@@ -45,6 +55,7 @@ public sealed class AppRuntime
         {
             ThemeManager.ApplyTheme(Application.Current.Resources, config.App.ThemeId);
         }
+        _ = EnsureTerminalApiStateAsync();
         ConfigChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -73,5 +84,22 @@ public sealed class AppRuntime
         {
             File.WriteAllText(defaultUser, "{input}");
         }
+    }
+
+    public async Task EnsureTerminalApiStateAsync()
+    {
+        if (Config.Terminal.ExecApi.Enabled)
+        {
+            await TerminalApiServer.StartAsync().ConfigureAwait(false);
+            return;
+        }
+
+        await TerminalApiServer.StopAsync().ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await TerminalApiServer.DisposeAsync().ConfigureAwait(false);
+        await TerminalSessions.DisposeAsync().ConfigureAwait(false);
     }
 }
