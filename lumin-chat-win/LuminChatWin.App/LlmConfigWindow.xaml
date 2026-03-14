@@ -1,0 +1,37 @@
+<Window x:Class="LuminChatWin.App.LlmConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LLM 配置"
+        Width="1180"
+        Height="820"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="20">
+            <TabControl x:Name="ModelTabControl" TabStripPlacement="Left">
+                <TabItem Header="概览">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="20,0,0,0">
+                            <TextBlock Text="模型说明" FontSize="22" FontWeight="SemiBold"/>
+                            <TextBlock Text="每个标签页对应一个模型等级。你可以分别配置模型名、接口地址、API Key 或环境变量、温度和最大 token。" Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Level 1"><ScrollViewer><StackPanel x:Name="Level1Panel" Margin="20,0,0,0"/></ScrollViewer></TabItem>
+                <TabItem Header="Level 2"><ScrollViewer><StackPanel x:Name="Level2Panel" Margin="20,0,0,0"/></ScrollViewer></TabItem>
+                <TabItem Header="Level 3"><ScrollViewer><StackPanel x:Name="Level3Panel" Margin="20,0,0,0"/></ScrollViewer></TabItem>
+                <TabItem Header="Level 4"><ScrollViewer><StackPanel x:Name="Level4Panel" Margin="20,0,0,0"/></ScrollViewer></TabItem>
+                <TabItem Header="Level 5"><ScrollViewer><StackPanel x:Name="Level5Panel" Margin="20,0,0,0"/></ScrollViewer></TabItem>
+            </TabControl>
+        </Border>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="保存" Click="Save_Click"/>
+            <Button Content="关闭" Style="{StaticResource SubtleButtonStyle}" Click="Close_Click" Margin="0"/>
+        </StackPanel>
+    </Grid>
+</Window>

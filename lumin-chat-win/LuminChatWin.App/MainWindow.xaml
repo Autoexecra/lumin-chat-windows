@@ -1,0 +1,92 @@
+﻿<Window x:Class="LuminChatWin.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Lumin Chat"
+        Width="1180"
+        Height="760"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="28" Padding="28" Margin="0,0,0,18">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="340"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Lumin Chat" FontSize="34" FontWeight="Bold"/>
+                    <TextBlock Text="Windows 原生图形版执行代理，保留多轮对话、会话持久化、长期记忆、SSH、Web、批任务和配置分窗。" Margin="0,10,0,0" TextWrapping="Wrap" FontSize="15" Foreground="{StaticResource MutedBrush}"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
+                        <Button Content="打开会话窗口" Click="OpenChatWindow_Click"/>
+                        <Button Content="LLM 配置" Style="{StaticResource SubtleButtonStyle}" Click="OpenLlmConfig_Click"/>
+                        <Button Content="综合设置" Style="{StaticResource SubtleButtonStyle}" Click="OpenSettings_Click"/>
+                    </StackPanel>
+                </StackPanel>
+                <Border Grid.Column="1" Background="{StaticResource AccentBrush}" CornerRadius="22" Padding="22">
+                    <StackPanel>
+                        <TextBlock Text="当前工作区" Foreground="White" FontSize="14"/>
+                        <TextBlock x:Name="WorkspaceTextBlock" Foreground="White" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,10"/>
+                        <Button Content="切换工作区" Style="{StaticResource SubtleButtonStyle}" Click="ChangeWorkspace_Click"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.15*"/>
+                <ColumnDefinition Width="0.85*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="24" Margin="0,0,12,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="窗口布局" FontSize="22" FontWeight="SemiBold"/>
+                    <UniformGrid Grid.Row="1" Columns="2" Rows="2" Margin="0,18,0,0">
+                        <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Margin="0,0,12,12" Padding="18">
+                            <StackPanel>
+                                <TextBlock Text="独立会话窗口" FontWeight="SemiBold" FontSize="18"/>
+                                <TextBlock Text="会话区单独成窗，可最大化使用，左侧放会话列表和工具轨迹。" Margin="0,8,0,12" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                <Button Content="立即打开" Click="OpenChatWindow_Click"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Margin="0,0,0,12" Padding="18">
+                            <StackPanel>
+                                <TextBlock Text="模型配置窗口" FontWeight="SemiBold" FontSize="18"/>
+                                <TextBlock Text="按模型等级分标签页管理 API Key、Base URL、模型名、温度和最大 token。" Margin="0,8,0,12" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                <Button Content="打开模型配置" Click="OpenLlmConfig_Click"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Margin="0,0,12,0" Padding="18">
+                            <StackPanel>
+                                <TextBlock Text="综合设置窗口" FontWeight="SemiBold" FontSize="18"/>
+                                <TextBlock Text="一般设置、命令策略、SSH、知识库、部署和许可证等拆分成多标签页。" Margin="0,8,0,12" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                <Button Content="打开综合设置" Click="OpenSettings_Click"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="18">
+                            <StackPanel>
+                                <TextBlock Text="增强能力" FontWeight="SemiBold" FontSize="18"/>
+                                <TextBlock Text="补充了批量任务入口、工作区切换和可视化工具轨迹，方便比终端版更稳地操作。" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="24" Margin="12,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="当前配置概览" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="ConfigSummaryTextBlock" Margin="0,18,0,0" TextWrapping="Wrap" FontSize="14" Foreground="{StaticResource MutedBrush}"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

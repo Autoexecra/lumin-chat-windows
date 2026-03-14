@@ -1,0 +1,48 @@
+# Visual Studio / .NET
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+*.log
+
+# Build artifacts
+bin/
+obj/
+TestResults/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+
+# Rider
+.idea/
+
+# Python virtual env
+.venv/
+venv/
+__pycache__/
+
+# Temporary
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# OS
+Thumbs.db
+Desktop.ini
+*.DS_Store
+
+# Logs
+*.log
+
+# JetBrains Rider
+.idea/
+
+# VS Code
+.history/
