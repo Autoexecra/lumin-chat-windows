@@ -18,6 +18,7 @@ public sealed class AppRuntime : IAsyncDisposable
         TerminalSessions = new TerminalSessionManager(() => Config.Terminal);
         TerminalApiServer = new TerminalApiServer(TerminalSessions, () => Config.Terminal);
         TerminalAgent = new TerminalAgentService(_chatClient, () => Config, TerminalSessions);
+        TerminalProfiles = new TerminalProfileStore(() => ConfigService.ExpandPath(Config.Terminal.ProfileStorePath));
         EnsurePromptLibrary();
         _ = EnsureTerminalApiStateAsync();
     }
@@ -35,6 +36,8 @@ public sealed class AppRuntime : IAsyncDisposable
     public TerminalApiServer TerminalApiServer { get; }
 
     public TerminalAgentService TerminalAgent { get; }
+
+    public TerminalProfileStore TerminalProfiles { get; }
 
     public ChatAgent CreateAgent(string? sessionIdOrPath = null, string? workdir = null, Func<string, string, bool>? confirmCallback = null)
     {

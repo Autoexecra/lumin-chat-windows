@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace LuminChatWin.Core.Models;
 
 public enum TerminalSessionKind
@@ -27,6 +29,89 @@ public sealed class TerminalSessionInfo
     public string LastActivityAt { get; set; } = DateTime.UtcNow.ToString("O");
     public bool IsConnected { get; set; }
     public bool SupportsBridge { get; init; }
+    public bool IsApiShared { get; set; } = true;
+    public bool IsSshShared { get; set; } = true;
+}
+
+public sealed class TerminalSessionProfile
+{
+    [JsonPropertyName("profile_id")]
+    public string ProfileId { get; set; } = Guid.NewGuid().ToString("N");
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("kind")]
+    public TerminalSessionKind Kind { get; set; }
+
+    [JsonPropertyName("program")]
+    public string Program { get; set; } = "pwsh";
+
+    [JsonPropertyName("arguments")]
+    public string Arguments { get; set; } = "-NoLogo -NoProfile";
+
+    [JsonPropertyName("working_directory")]
+    public string WorkingDirectory { get; set; } = Environment.CurrentDirectory;
+
+    [JsonPropertyName("host")]
+    public string Host { get; set; } = string.Empty;
+
+    [JsonPropertyName("port")]
+    public int Port { get; set; } = 22;
+
+    [JsonPropertyName("username")]
+    public string Username { get; set; } = string.Empty;
+
+    [JsonPropertyName("password")]
+    public string Password { get; set; } = string.Empty;
+
+    [JsonPropertyName("port_name")]
+    public string PortName { get; set; } = string.Empty;
+
+    [JsonPropertyName("baud_rate")]
+    public int BaudRate { get; set; } = 115200;
+
+    [JsonPropertyName("parity")]
+    public string Parity { get; set; } = "None";
+
+    [JsonPropertyName("data_bits")]
+    public int DataBits { get; set; } = 8;
+
+    [JsonPropertyName("stop_bits")]
+    public string StopBits { get; set; } = "One";
+
+    [JsonPropertyName("new_line")]
+    public string NewLine { get; set; } = "\r\n";
+
+    [JsonPropertyName("ssh_shared")]
+    public bool SshShared { get; set; } = true;
+
+    [JsonPropertyName("api_shared")]
+    public bool ApiShared { get; set; } = true;
+
+    [JsonPropertyName("created_at")]
+    public string CreatedAt { get; set; } = DateTime.UtcNow.ToString("O");
+
+    [JsonPropertyName("last_used_at")]
+    public string LastUsedAt { get; set; } = string.Empty;
+
+    public string Descriptor => Kind switch
+    {
+        TerminalSessionKind.PowerShell => string.IsNullOrWhiteSpace(WorkingDirectory) ? Program : $"{Program} | {WorkingDirectory}",
+        TerminalSessionKind.Ssh => $"{Username}@{Host}:{Port}",
+        TerminalSessionKind.Telnet => $"{Host}:{Port}",
+        TerminalSessionKind.Serial => $"{PortName} @ {BaudRate}",
+        _ => Title,
+    };
+
+    public string KindLabel => Kind switch
+    {
+        TerminalSessionKind.PowerShell => "PowerShell",
+        TerminalSessionKind.Ssh => "SSH",
+        TerminalSessionKind.Telnet => "Telnet",
+        TerminalSessionKind.Serial => "Serial",
+        _ => Kind.ToString(),
+    };
 }
 
 public sealed class TerminalHistoryEntry
@@ -68,6 +153,8 @@ public sealed class TerminalPowerShellOptions
     public string Program { get; set; } = "pwsh";
     public string Arguments { get; set; } = "-NoLogo -NoProfile";
     public string WorkingDirectory { get; set; } = Environment.CurrentDirectory;
+    public bool ApiShared { get; set; } = true;
+    public bool SshShared { get; set; } = true;
 }
 
 public sealed class TerminalSshOptions
@@ -77,6 +164,8 @@ public sealed class TerminalSshOptions
     public int Port { get; set; } = 22;
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+    public bool ApiShared { get; set; } = true;
+    public bool SshShared { get; set; } = true;
 }
 
 public sealed class TerminalTelnetOptions
@@ -84,6 +173,8 @@ public sealed class TerminalTelnetOptions
     public string Title { get; set; } = "Telnet";
     public string Host { get; set; } = string.Empty;
     public int Port { get; set; } = 23;
+    public bool ApiShared { get; set; } = true;
+    public bool SshShared { get; set; } = true;
 }
 
 public sealed class TerminalSerialOptions
@@ -95,6 +186,8 @@ public sealed class TerminalSerialOptions
     public int DataBits { get; set; } = 8;
     public string StopBits { get; set; } = "One";
     public string NewLine { get; set; } = "\r\n";
+    public bool ApiShared { get; set; } = true;
+    public bool SshShared { get; set; } = true;
 }
 
 public sealed class TerminalBridgeInfo

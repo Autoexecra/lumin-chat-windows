@@ -1,11 +1,12 @@
 <Window x:Class="LuminChatWin.App.TerminalControlWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:models="clr-namespace:LuminChatWin.Core.Models;assembly=LuminChatWin.Core"
         Title="Lumin Chat Terminal"
         Icon="Assets/Lumin-Chat图标.png"
-        Width="1540"
-        Height="920"
+        Width="1680"
+        Height="980"
+        MinWidth="1380"
+        MinHeight="860"
         WindowStartupLocation="CenterOwner">
     <Grid Margin="22">
         <Grid.RowDefinitions>
@@ -13,23 +14,29 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="20" Margin="0,0,0,16">
+        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="28" Padding="24" Margin="0,0,0,16">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="420"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="串口控制与终端编排" FontSize="28" FontWeight="Bold"/>
-                    <TextBlock Text="统一管理 PowerShell、SSH、Telnet、串口会话，并提供 Agent 规划、外部 API 和串口桥接入口。" Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="终端控制台" FontSize="30" FontWeight="Bold"/>
+                        <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="12,4" Margin="12,4,0,0" VerticalAlignment="Top">
+                            <TextBlock Text="配置会话 + 多标签终端 + Agent 执行" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                    <TextBlock Text="左侧只保留会话、连接、Agent 和共享配置入口；中间专注打开中的终端标签页。配置过的连接下次可直接打开。" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                 </StackPanel>
-                <Border Grid.Column="1" Background="{StaticResource AccentBrush}" CornerRadius="18" Padding="18">
+                <Border Grid.Column="1" Background="{StaticResource AccentBrush}" CornerRadius="22" Padding="18">
                     <StackPanel>
-                        <TextBlock Text="本地 API" Foreground="White" FontSize="14"/>
-                        <TextBlock x:Name="ApiSummaryTextBlock" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,6,0,12" TextWrapping="Wrap"/>
+                        <TextBlock Text="服务状态" Foreground="White" FontSize="14"/>
+                        <TextBlock x:Name="ApiSummaryTextBlock" Foreground="White" FontSize="18" FontWeight="SemiBold" Margin="0,6,0,10" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="OpenSessionSummaryTextBlock" Foreground="White" Margin="0,0,0,12" TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="切换 API" Click="ToggleApi_Click"/>
-                            <Button Content="刷新会话" Style="{StaticResource SubtleButtonStyle}" Click="RefreshSessions_Click"/>
+                            <Button Content="刷新全部" Click="RefreshAll_Click"/>
+                            <Button Content="保存共享设置" Style="{StaticResource SubtleButtonStyle}" Click="SaveSharingSettings_Click"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -38,119 +45,100 @@
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="290"/>
-                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="420"/>
+                <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="10"/>
-                <ColumnDefinition Width="460"/>
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="22" Padding="18">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="会话列表" FontSize="20" FontWeight="SemiBold"/>
-                    <ListBox x:Name="SessionsListBox" Grid.Row="1" Margin="0,14,0,14" SelectionChanged="SessionsListBox_SelectionChanged">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="{x:Type models:TerminalSessionInfo}">
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="14" Margin="0,0,0,10">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="16"/>
-                                        <TextBlock Text="{Binding Kind}" Margin="0,4,0,0" Foreground="{StaticResource AccentBrush}"/>
-                                        <TextBlock Text="{Binding Descriptor}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <StackPanel Grid.Row="2" Orientation="Horizontal">
-                        <Button Content="刷新串口" Click="RefreshSerialPorts_Click"/>
-                        <Button Content="关闭会话" Style="{StaticResource SubtleButtonStyle}" Click="CloseSession_Click"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
-
-            <GridSplitter Grid.Column="1" HorizontalAlignment="Center" Width="10" Background="Transparent"/>
-
-            <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="22" Padding="18">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="10"/>
-                        <RowDefinition Height="190"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <StackPanel>
-                        <TextBlock x:Name="SessionTitleTextBlock" Text="未选择会话" FontSize="22" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="SessionMetaTextBlock" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
-                        <TextBlock x:Name="CurrentCommandTextBlock" Margin="0,10,0,0" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap"/>
-                    </StackPanel>
-
-                    <TextBox x:Name="OutputTextBox"
-                             Grid.Row="1"
-                             Margin="0,16,0,0"
-                             FontFamily="Consolas"
-                             FontSize="13"
-                             AcceptsReturn="True"
-                             VerticalScrollBarVisibility="Auto"
-                             HorizontalScrollBarVisibility="Auto"
-                             IsReadOnly="True"
-                             TextWrapping="Wrap"/>
-
-                    <GridSplitter Grid.Row="2" Height="10" HorizontalAlignment="Stretch" Background="Transparent"/>
-
-                    <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
-                        <Grid>
+            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="14">
+                <TabControl x:Name="NavigationTabControl" TabStripPlacement="Left">
+                    <TabItem Header="会话">
+                        <Grid Margin="10,0,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <TextBlock Text="历史轨迹" FontSize="16" FontWeight="SemiBold"/>
-                            <ListBox x:Name="HistoryListBox" Grid.Row="1" Margin="0,10,0,0"/>
+
+                            <StackPanel>
+                                <TextBlock Text="已配置会话" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="双击直接打开；右击可重命名、删除和切换共享开关。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ListBox x:Name="ProfilesListBox" Grid.Row="1" Margin="0,14,0,14" MouseDoubleClick="ProfilesListBox_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14" Margin="0,0,0,10">
+                                            <Border.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="打开会话" Click="OpenProfile_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="加载到连接表单" Click="LoadProfileToForm_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <Separator/>
+                                                    <MenuItem Header="重命名" Click="RenameProfile_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="删除" Click="DeleteProfile_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <Separator/>
+                                                    <MenuItem Header="切换 SSH 共享" Click="ToggleProfileSshShare_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="切换 API 共享" Click="ToggleProfileApiShare_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                </ContextMenu>
+                                            </Border.ContextMenu>
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" DockPanel.Dock="Left"/>
+                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="10,2" HorizontalAlignment="Right">
+                                                        <TextBlock Text="{Binding KindLabel}" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Descriptor}" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="8,2" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding SshShareLabel}" Foreground="{StaticResource AccentBrush}"/>
+                                                    </Border>
+                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="8,2">
+                                                        <TextBlock Text="{Binding ApiShareLabel}" Foreground="{StaticResource AccentBrush}"/>
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding LastUsedLabel}" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" FontSize="12"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <StackPanel Grid.Row="2">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="打开选中会话" Click="OpenSelectedProfile_Click"/>
+                                    <Button Content="加载到连接表单" Style="{StaticResource SubtleButtonStyle}" Click="LoadSelectedProfileToForm_Click"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ProfileHintTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
                         </Grid>
-                    </Border>
+                    </TabItem>
 
-                    <Border Grid.Row="4" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,0">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="CommandTextBox" Margin="0"/>
-                            <Button Grid.Column="1" Content="执行命令" Margin="10,0,8,0" Click="ExecuteCommand_Click"/>
-                            <Button Grid.Column="2" Content="发送原始" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,8,0" Click="SendRawInput_Click"/>
-                            <Button Grid.Column="3" Content="Ctrl+C" Style="{StaticResource SubtleButtonStyle}" Click="InterruptCommand_Click"/>
-                        </Grid>
-                    </Border>
-                </Grid>
-            </Border>
-
-            <GridSplitter Grid.Column="3" HorizontalAlignment="Center" Width="10" Background="Transparent"/>
-
-            <Border Grid.Column="4" Background="{StaticResource SurfaceBrush}" CornerRadius="22" Padding="16">
-                <TabControl TabStripPlacement="Left">
                     <TabItem Header="连接">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="10,0,0,0">
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14" Margin="0,0,0,12">
+                                <TextBlock Text="新建或更新连接配置" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="保存后会出现在左侧会话列表；保存并打开会同时启动会话。SSH 共享默认对串口会话自动开桥，API 共享默认纳入本地 HTTP API。" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
                                         <TextBlock Text="PowerShell" FontSize="18" FontWeight="SemiBold"/>
                                         <TextBox x:Name="PowerShellTitleTextBox" Text="本地 PowerShell"/>
                                         <TextBox x:Name="PowerShellProgramTextBox"/>
                                         <TextBox x:Name="PowerShellArgsTextBox"/>
                                         <TextBox x:Name="PowerShellWorkdirTextBox"/>
-                                        <Button Content="连接 PowerShell" Click="ConnectPowerShell_Click"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox x:Name="PowerShellSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
+                                            <CheckBox x:Name="PowerShellApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="保存配置" Click="SavePowerShellProfile_Click"/>
+                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenPowerShellProfile_Click"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14" Margin="0,0,0,12">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
                                         <TextBlock Text="SSH" FontSize="18" FontWeight="SemiBold"/>
                                         <TextBox x:Name="SshTitleTextBox" Text="SSH 会话"/>
@@ -158,21 +146,35 @@
                                         <TextBox x:Name="SshPortTextBox" Text="22"/>
                                         <TextBox x:Name="SshUsernameTextBox" Text="root"/>
                                         <PasswordBox x:Name="SshPasswordBox" Margin="0,0,0,8" Padding="10,8"/>
-                                        <Button Content="连接 SSH" Click="ConnectSsh_Click"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox x:Name="SshSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
+                                            <CheckBox x:Name="SshApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="保存配置" Click="SaveSshProfile_Click"/>
+                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenSshProfile_Click"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14" Margin="0,0,0,12">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
                                         <TextBlock Text="Telnet" FontSize="18" FontWeight="SemiBold"/>
                                         <TextBox x:Name="TelnetTitleTextBox" Text="Telnet 会话"/>
                                         <TextBox x:Name="TelnetHostTextBox" Text="127.0.0.1"/>
                                         <TextBox x:Name="TelnetPortTextBox" Text="23"/>
-                                        <Button Content="连接 Telnet" Click="ConnectTelnet_Click"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox x:Name="TelnetSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
+                                            <CheckBox x:Name="TelnetApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="保存配置" Click="SaveTelnetProfile_Click"/>
+                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenTelnetProfile_Click"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16">
                                     <StackPanel>
                                         <TextBlock Text="串口" FontSize="18" FontWeight="SemiBold"/>
                                         <TextBox x:Name="SerialTitleTextBox" Text="串口会话"/>
@@ -183,7 +185,15 @@
                                             <TextBox x:Name="SerialDataBitsTextBox" Text="8" Width="90" Margin="0,0,8,8"/>
                                             <TextBox x:Name="SerialStopBitsTextBox" Text="One" Width="90" Margin="0,0,0,8"/>
                                         </StackPanel>
-                                        <Button Content="连接串口" Click="ConnectSerial_Click"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <CheckBox x:Name="SerialSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
+                                            <CheckBox x:Name="SerialApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="刷新串口" Click="RefreshSerialPorts_Click"/>
+                                            <Button Content="保存配置" Style="{StaticResource SubtleButtonStyle}" Click="SaveSerialProfile_Click"/>
+                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenSerialProfile_Click"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -194,49 +204,98 @@
                         <Grid Margin="10,0,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <TextBlock Text="让 Agent 规划下一条命令；可自动执行，也可只给建议。" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
-                            <TextBox x:Name="AgentObjectiveTextBox" Grid.Row="1" AcceptsReturn="True" Height="90" TextWrapping="Wrap" Text="描述你希望终端完成的目标，例如：登录设备后检查版本并导出关键日志。"/>
-                            <ListBox x:Name="AgentDialogueListBox" Grid.Row="2" Margin="0,8,0,8"/>
-                            <TextBox x:Name="AgentUserInputTextBox" Grid.Row="3" AcceptsReturn="True" Height="74" TextWrapping="Wrap"/>
-                            <StackPanel Grid.Row="4">
-                                <CheckBox x:Name="AgentAutoExecuteCheckBox" Content="Agent 直接执行建议命令" Margin="0,0,0,10"/>
-                                <TextBlock Text="建议命令" FontWeight="SemiBold"/>
-                                <TextBox x:Name="SuggestedCommandTextBox" AcceptsReturn="True" Height="74" TextWrapping="Wrap"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                                    <Button Content="发送给 Agent" Click="SendAgentMessage_Click"/>
-                                    <Button Content="Agent 下一步" Click="RunAgentStep_Click"/>
-                                    <Button Content="执行建议" Style="{StaticResource SubtleButtonStyle}" Click="ExecuteSuggested_Click"/>
-                                </StackPanel>
+
+                            <StackPanel>
+                                <TextBlock Text="Agent 执行台" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="上方显示执行过程和对话记录，下方输入需求。选中 auto 时使用终端默认模型等级。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ListBox x:Name="AgentTimelineListBox" Grid.Row="1" Margin="0,14,0,12">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="12" Margin="0,0,0,10">
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <TextBlock Text="{Binding RoleLabel}" FontWeight="SemiBold" DockPanel.Dock="Left"/>
+                                                    <TextBlock Text="{Binding TimestampLabel}" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Content}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,8,0">
+                                        <TextBlock Text="模型" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="AgentModelComboBox"/>
+                                        <TextBlock Text="目标会话" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                                        <ComboBox x:Name="AgentTargetSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="SessionId"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                        <CheckBox x:Name="AgentAutoExecuteCheckBox" Content="Agent 直接执行建议命令" Margin="0,0,0,10"/>
+                                        <Button Content="刷新目标会话" Click="RefreshAgentTargets_Click"/>
+                                        <TextBlock x:Name="AgentStatusTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <StackPanel Grid.Row="3">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="发送需求" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="AgentRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
+                                        <Button Content="发送给 Agent" Click="SendAgentRequest_Click"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
+                                    <StackPanel>
+                                        <TextBlock Text="建议指令" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="SuggestedCommandTextBox" AcceptsReturn="True" Height="88" TextWrapping="Wrap" Margin="0,10,0,10"/>
+                                        <Button Content="执行建议指令" Style="{StaticResource SubtleButtonStyle}" Click="ExecuteSuggestedCommand_Click"/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </Grid>
                     </TabItem>
 
-                    <TabItem Header="API / Bridge">
+                    <TabItem Header="共享">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="10,0,0,0">
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14" Margin="0,0,0,12">
+                                <TextBlock Text="服务与共享" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="API 是全局服务；配置会话上的 API 共享只决定哪些打开中的会话会被暴露给接口。串口会话若开启 SSH 共享，会在打开时自动启动桥接。" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
-                                        <TextBlock Text="执行 API" FontSize="18" FontWeight="SemiBold"/>
+                                        <TextBlock Text="本地 HTTP API" FontSize="18" FontWeight="SemiBold"/>
                                         <CheckBox x:Name="ApiEnabledCheckBox" Content="启用本地 HTTP API" Margin="0,10,0,8"/>
                                         <TextBox x:Name="ApiHostTextBox"/>
                                         <TextBox x:Name="ApiPortTextBox"/>
                                         <TextBox x:Name="ApiTimeoutTextBox"/>
-                                        <TextBlock x:Name="ApiEndpointsTextBlock" Margin="0,8,0,10" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
-                                        <Button Content="保存并切换 API" Click="ToggleApi_Click"/>
+                                        <TextBlock x:Name="ApiEndpointsTextBlock" Margin="0,8,0,10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <Button Content="保存共享设置" Click="SaveSharingSettings_Click"/>
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16">
                                     <StackPanel>
                                         <TextBlock Text="串口 SSH Bridge" FontSize="18" FontWeight="SemiBold"/>
-                                        <TextBlock Text="当前实现先提供本地 TCP 中继预览，便于外部工具和自动化脚本接入串口会话。" Margin="0,8,0,8" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Text="选中一个已打开串口标签后，可以手工打开桥接端口；如果该配置会话启用了 SSH 共享，打开会话时会自动启动。" Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                         <TextBox x:Name="BridgePortTextBox" Text=""/>
-                                        <Button Content="为当前串口会话打开 Bridge" Click="OpenBridge_Click"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="为当前会话打开 Bridge" Click="OpenBridge_Click"/>
+                                            <Button Content="关闭当前会话" Style="{StaticResource SubtleButtonStyle}" Click="CloseCurrentSession_Click"/>
+                                        </StackPanel>
                                         <TextBlock x:Name="BridgeStatusTextBlock" Margin="0,10,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </Border>
@@ -244,6 +303,133 @@
                         </ScrollViewer>
                     </TabItem>
                 </TabControl>
+            </Border>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Center" Width="12" Background="Transparent"/>
+
+            <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="打开中的会话" FontSize="22" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SessionDeckMetaTextBlock" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="刷新会话" Click="RefreshOpenSessions_Click"/>
+                            <Button Content="关闭当前会话" Style="{StaticResource SubtleButtonStyle}" Click="CloseCurrentSession_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,16,0,0">
+                        <TabControl x:Name="OpenSessionsTabControl" SelectionChanged="OpenSessionsTabControl_SelectionChanged">
+                            <TabControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Text="{Binding KindLabel}" Foreground="{StaticResource MutedBrush}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </TabControl.ItemTemplate>
+                            <TabControl.ContentTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+
+                                        <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Descriptor}" FontSize="16" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding MetaLine}" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="{Binding CurrentCommandText}" Margin="0,8,0,0" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="10,2" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding ApiShareLabel}" Foreground="{StaticResource AccentBrush}"/>
+                                                    </Border>
+                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="10,2">
+                                                        <TextBlock Text="{Binding SshShareLabel}" Foreground="{StaticResource AccentBrush}"/>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+
+                                        <Border Grid.Row="1" Background="#FF0F1520" CornerRadius="22" Margin="0,14,0,0" Padding="0" BorderBrush="#FF1F3348" BorderThickness="1">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+
+                                                <TextBox Grid.Row="0"
+                                                         Text="{Binding OutputText, Mode=OneWay}"
+                                                         IsReadOnly="True"
+                                                         TextChanged="TerminalOutputTextBox_TextChanged"
+                                                         FontFamily="Consolas"
+                                                         FontSize="13"
+                                                         Foreground="#FFD9F7E4"
+                                                         Background="Transparent"
+                                                         BorderThickness="0"
+                                                         AcceptsReturn="True"
+                                                         TextWrapping="Wrap"
+                                                         VerticalScrollBarVisibility="Auto"
+                                                         HorizontalScrollBarVisibility="Auto"
+                                                         Padding="16,16,16,12"/>
+
+                                                <Border Grid.Row="1" Background="#FF111E2C" BorderThickness="0,1,0,0" BorderBrush="#FF203447" Padding="14,10">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBox Grid.Column="0"
+                                                                 Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                                                                 KeyDown="SessionInputTextBox_KeyDown"
+                                                                 Background="#FF162535"
+                                                                 BorderBrush="#FF2B4D66"
+                                                                 Foreground="#FFF5FBFF"
+                                                                 Margin="0"
+                                                                 Padding="10,8"/>
+                                                        <Button Grid.Column="1" Content="执行" Margin="10,0,8,0" Click="ExecuteSessionCommand_Click"/>
+                                                        <Button Grid.Column="2" Content="原始发送" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,8,0" Click="SendRawSessionInput_Click"/>
+                                                        <Button Grid.Column="3" Content="Ctrl+C" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,8,0" Click="InterruptSession_Click"/>
+                                                        <Button Grid.Column="4" Content="关闭" Style="{StaticResource SubtleButtonStyle}" Click="CloseSessionTab_Click"/>
+                                                    </Grid>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </TabControl.ContentTemplate>
+                        </TabControl>
+
+                        <Border x:Name="EmptySessionsBorder" Background="{StaticResource PanelBrush}" CornerRadius="24" Padding="26" Margin="0,8,0,0" Visibility="Collapsed">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="还没有打开任何终端会话" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                <TextBlock Text="去左侧“会话”双击一个已保存配置，或在“连接”里新建并保存。" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
             </Border>
         </Grid>
     </Grid>

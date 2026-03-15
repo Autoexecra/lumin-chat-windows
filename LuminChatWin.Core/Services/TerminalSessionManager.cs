@@ -30,9 +30,29 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             .ToList();
     }
 
+    public IReadOnlyList<TerminalSessionInfo> ListApiSharedSessions()
+    {
+        return _sessions.Values
+            .Where(item => item.Info.IsApiShared)
+            .OrderByDescending(item => item.Info.LastActivityAt)
+            .Select(item => CloneInfo(item.Info))
+            .ToList();
+    }
+
     public TerminalSessionInfo? GetSession(string sessionId)
     {
         return _sessions.TryGetValue(sessionId, out var session) ? CloneInfo(session.Info) : null;
+    }
+
+    public TerminalSessionInfo GetApiSharedSession(string sessionId)
+    {
+        var session = GetRequiredSession(sessionId);
+        if (!session.Info.IsApiShared)
+        {
+            throw new UnauthorizedAccessException($"Session is not shared through API: {sessionId}");
+        }
+
+        return CloneInfo(session.Info);
     }
 
     public IReadOnlyList<TerminalHistoryEntry> GetHistory(string sessionId, int maxEntries = 500)
@@ -77,19 +97,19 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     public async Task<TerminalSessionInfo> CreatePowerShellSessionAsync(TerminalPowerShellOptions options, CancellationToken cancellationToken = default)
     {
         var backend = new PowerShellTerminalBackend(options.Program, options.Arguments, options.WorkingDirectory);
-        return await AddSessionAsync(options.Title, TerminalSessionKind.PowerShell, options.WorkingDirectory, false, backend, cancellationToken).ConfigureAwait(false);
+        return await AddSessionAsync(options.Title, TerminalSessionKind.PowerShell, options.WorkingDirectory, false, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<TerminalSessionInfo> CreateSshSessionAsync(TerminalSshOptions options, CancellationToken cancellationToken = default)
     {
         var backend = new SshTerminalBackend(options.Host, options.Port, options.Username, options.Password);
-        return await AddSessionAsync(options.Title, TerminalSessionKind.Ssh, $"{options.Username}@{options.Host}:{options.Port}", false, backend, cancellationToken).ConfigureAwait(false);
+        return await AddSessionAsync(options.Title, TerminalSessionKind.Ssh, $"{options.Username}@{options.Host}:{options.Port}", false, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<TerminalSessionInfo> CreateTelnetSessionAsync(TerminalTelnetOptions options, CancellationToken cancellationToken = default)
     {
         var backend = new TelnetTerminalBackend(options.Host, options.Port);
-        return await AddSessionAsync(options.Title, TerminalSessionKind.Telnet, $"{options.Host}:{options.Port}", false, backend, cancellationToken).ConfigureAwait(false);
+        return await AddSessionAsync(options.Title, TerminalSessionKind.Telnet, $"{options.Host}:{options.Port}", false, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<TerminalSessionInfo> CreateSerialSessionAsync(TerminalSerialOptions options, CancellationToken cancellationToken = default)
@@ -97,7 +117,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         var parity = Enum.TryParse<Parity>(options.Parity, true, out var parsedParity) ? parsedParity : Parity.None;
         var stopBits = Enum.TryParse<StopBits>(options.StopBits, true, out var parsedStopBits) ? parsedStopBits : StopBits.One;
         var backend = new SerialTerminalBackend(options.PortName, options.BaudRate, parity, options.DataBits, stopBits, options.NewLine);
-        return await AddSessionAsync(options.Title, TerminalSessionKind.Serial, $"{options.PortName} @ {options.BaudRate}", true, backend, cancellationToken).ConfigureAwait(false);
+        return await AddSessionAsync(options.Title, TerminalSessionKind.Serial, $"{options.PortName} @ {options.BaudRate}", true, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SendInputAsync(string sessionId, string text, CancellationToken cancellationToken = default)
@@ -247,7 +267,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
-    private async Task<TerminalSessionInfo> AddSessionAsync(string title, TerminalSessionKind kind, string descriptor, bool supportsBridge, ITerminalBackend backend, CancellationToken cancellationToken)
+    private async Task<TerminalSessionInfo> AddSessionAsync(string title, TerminalSessionKind kind, string descriptor, bool supportsBridge, bool apiShared, bool sshShared, ITerminalBackend backend, CancellationToken cancellationToken)
     {
         var info = new TerminalSessionInfo
         {
@@ -256,6 +276,8 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             Descriptor = descriptor,
             IsConnected = false,
             SupportsBridge = supportsBridge,
+            IsApiShared = apiShared,
+            IsSshShared = sshShared,
         };
         var session = new SessionState(info, backend);
         HookBackend(session);
@@ -354,6 +376,8 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             LastActivityAt = source.LastActivityAt,
             IsConnected = source.IsConnected,
             SupportsBridge = source.SupportsBridge,
+            IsApiShared = source.IsApiShared,
+            IsSshShared = source.IsSshShared,
         };
     }
 

@@ -21,12 +21,13 @@ public sealed class TerminalAgentService
         string sessionId,
         string objective,
         IReadOnlyList<TerminalAgentDialogueItem> dialogue,
-        int? modelLevel = null,
+        string? selectedModel = null,
         bool autoExecute = false,
         CancellationToken cancellationToken = default)
     {
         var config = _configAccessor();
         var session = _sessionManager.GetSession(sessionId) ?? throw new KeyNotFoundException($"Unknown terminal session: {sessionId}");
+        var modelLevel = ResolveModelLevel(config, selectedModel);
         var prompt = BuildUserPrompt(session, objective, dialogue, _sessionManager.GetHistory(sessionId, 40), _sessionManager.GetRecentOutput(sessionId, 10000));
         var messages = new List<PersistedChatMessage>
         {
@@ -42,7 +43,7 @@ public sealed class TerminalAgentService
             },
         };
 
-        var response = await _chatClient.CompleteAsync(config, modelLevel ?? config.Terminal.Agent.DefaultModelLevel, messages, null, cancellationToken).ConfigureAwait(false);
+        var response = await _chatClient.CompleteAsync(config, modelLevel, messages, null, cancellationToken).ConfigureAwait(false);
         if (!response.Success)
         {
             return new TerminalAgentPlan
@@ -81,6 +82,18 @@ public sealed class TerminalAgentService
             RawResponse = response.Content,
             ExecutionResult = executionResult,
         };
+    }
+
+    private static int ResolveModelLevel(AppConfig config, string? selectedModel)
+    {
+        if (!string.IsNullOrWhiteSpace(selectedModel) &&
+            selectedModel.StartsWith("level", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(selectedModel[5..], out var explicitLevel))
+        {
+            return explicitLevel;
+        }
+
+        return Math.Max(1, config.Terminal.Agent.DefaultModelLevel > 0 ? config.Terminal.Agent.DefaultModelLevel : config.App.DefaultModelLevel);
     }
 
     private static string BuildUserPrompt(

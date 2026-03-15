@@ -328,7 +328,7 @@ public sealed class TerminalApiServer : IAsyncDisposable
 
         if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && string.Equals(path, "/api/sessions", StringComparison.OrdinalIgnoreCase))
         {
-            return (200, new { sessions = _sessionManager.ListSessions() });
+            return (200, new { sessions = _sessionManager.ListApiSharedSessions() });
         }
 
         if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && path.StartsWith("/api/sessions/", StringComparison.OrdinalIgnoreCase))
@@ -337,11 +337,13 @@ public sealed class TerminalApiServer : IAsyncDisposable
             var routeParts = remainder.Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (routeParts.Length == 2 && string.Equals(routeParts[1], "history", StringComparison.OrdinalIgnoreCase))
             {
+                _sessionManager.GetApiSharedSession(routeParts[0]);
                 return (200, new { sessionId = routeParts[0], entries = _sessionManager.GetHistory(routeParts[0]) });
             }
 
             if (routeParts.Length == 2 && string.Equals(routeParts[1], "current-output", StringComparison.OrdinalIgnoreCase))
             {
+                _sessionManager.GetApiSharedSession(routeParts[0]);
                 return (200, _sessionManager.GetCurrentCommandOutput(routeParts[0]));
             }
         }
@@ -349,6 +351,7 @@ public sealed class TerminalApiServer : IAsyncDisposable
         if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && string.Equals(path, "/api/exec_cmd", StringComparison.OrdinalIgnoreCase))
         {
             var payload = JsonSerializer.Deserialize<ExecCommandRequest>(body, _jsonOptions) ?? new ExecCommandRequest();
+            _sessionManager.GetApiSharedSession(payload.SessionId);
             var timeout = TimeSpan.FromSeconds(payload.TimeoutSeconds <= 0 ? Config.ExecApi.DefaultTimeoutSeconds : payload.TimeoutSeconds);
             var result = await _sessionManager.ExecuteCommandAsync(payload.SessionId, payload.Command, timeout, cancellationToken).ConfigureAwait(false);
             return (200, result);
@@ -357,6 +360,7 @@ public sealed class TerminalApiServer : IAsyncDisposable
         if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && string.Equals(path, "/api/send_input", StringComparison.OrdinalIgnoreCase))
         {
             var payload = JsonSerializer.Deserialize<SendInputRequest>(body, _jsonOptions) ?? new SendInputRequest();
+            _sessionManager.GetApiSharedSession(payload.SessionId);
             await _sessionManager.SendInputAsync(payload.SessionId, payload.Text, cancellationToken).ConfigureAwait(false);
             return (200, new { ok = true });
         }
@@ -364,6 +368,7 @@ public sealed class TerminalApiServer : IAsyncDisposable
         if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && string.Equals(path, "/api/bridge/open", StringComparison.OrdinalIgnoreCase))
         {
             var payload = JsonSerializer.Deserialize<BridgeRequest>(body, _jsonOptions) ?? new BridgeRequest();
+            _sessionManager.GetApiSharedSession(payload.SessionId);
             var result = await _sessionManager.StartSerialBridgeAsync(payload.SessionId, payload.Port, cancellationToken).ConfigureAwait(false);
             return (200, result);
         }

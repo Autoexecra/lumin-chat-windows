@@ -35,6 +35,35 @@ public sealed class CorePersistenceTests
         Assert.Contains(loaded.Messages, message => message.Role == "user" && message.Content == "hello");
     }
 
+    [Fact]
+    public void TerminalProfileStore_PersistsRenameAndSharingFlags()
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "terminal-profiles.json");
+        var store = new TerminalProfileStore(() => path);
+
+        var saved = store.Save(new TerminalSessionProfile
+        {
+            Title = "Board SSH",
+            Kind = TerminalSessionKind.Ssh,
+            Host = "192.168.1.20",
+            Port = 22,
+            Username = "root",
+        });
+
+        store.Rename(saved.ProfileId, "Board SSH Renamed");
+        store.SetApiShared(saved.ProfileId, false);
+        store.SetSshShared(saved.ProfileId, false);
+        store.Touch(saved.ProfileId);
+
+        var profiles = store.List();
+        var profile = Assert.Single(profiles);
+        Assert.Equal("Board SSH Renamed", profile.Title);
+        Assert.False(profile.ApiShared);
+        Assert.False(profile.SshShared);
+        Assert.False(string.IsNullOrWhiteSpace(profile.LastUsedAt));
+    }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "LuminChatWinTests", Guid.NewGuid().ToString("N"));

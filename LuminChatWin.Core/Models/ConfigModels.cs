@@ -188,6 +188,9 @@ public sealed class TerminalFeatureConfig
     [JsonPropertyName("default_powershell_args")]
     public string DefaultPowershellArgs { get; set; } = "-NoLogo -NoProfile";
 
+    [JsonPropertyName("profile_store_path")]
+    public string ProfileStorePath { get; set; } = "~/.lumin-chat-win/terminal-profiles.json";
+
     [JsonPropertyName("history_max_entries")]
     public int HistoryMaxEntries { get; set; } = 4000;
 
@@ -238,6 +241,9 @@ public sealed class TerminalAgentConfig
 {
     [JsonPropertyName("default_model_level")]
     public int DefaultModelLevel { get; set; } = 1;
+
+    [JsonPropertyName("selected_model")]
+    public string SelectedModel { get; set; } = "auto";
 
     [JsonPropertyName("auto_execute")]
     public bool AutoExecute { get; set; }
