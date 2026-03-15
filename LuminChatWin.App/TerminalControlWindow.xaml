@@ -8,49 +8,20 @@
         MinWidth="1380"
         MinHeight="860"
         WindowStartupLocation="CenterOwner">
-    <Grid Margin="22">
+    <Grid Margin="14">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="28" Padding="24" Margin="0,0,0,16">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="420"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="终端控制台" FontSize="30" FontWeight="Bold"/>
-                        <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="12,4" Margin="12,4,0,0" VerticalAlignment="Top">
-                            <TextBlock Text="配置会话 + 多标签终端 + Agent 执行" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
-                        </Border>
-                    </StackPanel>
-                    <TextBlock Text="左侧只保留会话、连接、Agent 和共享配置入口；中间专注打开中的终端标签页。配置过的连接下次可直接打开。" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
-                </StackPanel>
-                <Border Grid.Column="1" Background="{StaticResource AccentBrush}" CornerRadius="22" Padding="18">
-                    <StackPanel>
-                        <TextBlock Text="服务状态" Foreground="White" FontSize="14"/>
-                        <TextBlock x:Name="ApiSummaryTextBlock" Foreground="White" FontSize="18" FontWeight="SemiBold" Margin="0,6,0,10" TextWrapping="Wrap"/>
-                        <TextBlock x:Name="OpenSessionSummaryTextBlock" Foreground="White" Margin="0,0,0,12" TextWrapping="Wrap"/>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="刷新全部" Click="RefreshAll_Click"/>
-                            <Button Content="保存共享设置" Style="{StaticResource SubtleButtonStyle}" Click="SaveSharingSettings_Click"/>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-            </Grid>
-        </Border>
-
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="420"/>
+                <ColumnDefinition Width="360"/>
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="14">
+            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="12">
                 <TabControl x:Name="NavigationTabControl" TabStripPlacement="Left">
                     <TabItem Header="会话">
                         <Grid Margin="10,0,0,0">
@@ -204,33 +175,17 @@
                         <Grid Margin="10,0,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <StackPanel>
-                                <TextBlock Text="Agent 执行台" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="上方显示执行过程和对话记录，下方输入需求。选中 auto 时使用终端默认模型等级。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="Agent 控制台" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="这里负责模型选择、目标会话、需求输入和建议命令执行。实时过程单独放到“AI过程”标签。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
 
-                            <ListBox x:Name="AgentTimelineListBox" Grid.Row="1" Margin="0,14,0,12">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="12" Margin="0,0,0,10">
-                                            <StackPanel>
-                                                <DockPanel>
-                                                    <TextBlock Text="{Binding RoleLabel}" FontWeight="SemiBold" DockPanel.Dock="Left"/>
-                                                    <TextBlock Text="{Binding TimestampLabel}" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/>
-                                                </DockPanel>
-                                                <TextBlock Text="{Binding Content}" Margin="0,6,0,0" TextWrapping="Wrap"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
-                            <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
+                            <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,12">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -250,7 +205,7 @@
                                 </Grid>
                             </Border>
 
-                            <StackPanel Grid.Row="3">
+                            <StackPanel Grid.Row="2">
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
                                     <StackPanel>
                                         <TextBlock Text="发送需求" FontWeight="SemiBold"/>
@@ -266,6 +221,41 @@
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
+
+                            <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
+                                <StackPanel>
+                                    <TextBlock Text="当前状态" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="AgentSummaryTextBlock" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="AI过程">
+                        <Grid Margin="10,0,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="AI 实时过程" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="实时显示 Agent 的分析、建议命令和执行反馈。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ListBox x:Name="AgentTimelineListBox" Grid.Row="1" Margin="0,14,0,0">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="12" Margin="0,0,0,10">
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <TextBlock Text="{Binding RoleLabel}" FontWeight="SemiBold" DockPanel.Dock="Left"/>
+                                                    <TextBlock Text="{Binding TimestampLabel}" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Content}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                         </Grid>
                     </TabItem>
 
@@ -307,21 +297,21 @@
 
             <GridSplitter Grid.Column="1" HorizontalAlignment="Center" Width="12" Background="Transparent"/>
 
-            <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="16">
+            <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="10">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <Grid>
+                    <Grid Margin="4,0,4,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="打开中的会话" FontSize="22" FontWeight="SemiBold"/>
-                            <TextBlock x:Name="SessionDeckMetaTextBlock" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            <TextBlock Text="打开中的会话" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SessionDeckMetaTextBlock" Margin="0,2,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="刷新会话" Click="RefreshOpenSessions_Click"/>
@@ -329,7 +319,7 @@
                         </StackPanel>
                     </Grid>
 
-                    <Grid Grid.Row="1" Margin="0,16,0,0">
+                    <Grid Grid.Row="1" Margin="0,6,0,0">
                         <TabControl x:Name="OpenSessionsTabControl" SelectionChanged="OpenSessionsTabControl_SelectionChanged">
                             <TabControl.ItemTemplate>
                                 <DataTemplate>
@@ -342,82 +332,25 @@
                             </TabControl.ItemTemplate>
                             <TabControl.ContentTemplate>
                                 <DataTemplate>
-                                    <Grid Margin="0,8,0,0">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="*"/>
-                                        </Grid.RowDefinitions>
-
-                                        <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="14">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Descriptor}" FontSize="16" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="{Binding MetaLine}" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
-                                                    <TextBlock Text="{Binding CurrentCommandText}" Margin="0,8,0,0" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="10,2" Margin="0,0,8,0">
-                                                        <TextBlock Text="{Binding ApiShareLabel}" Foreground="{StaticResource AccentBrush}"/>
-                                                    </Border>
-                                                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="999" Padding="10,2">
-                                                        <TextBlock Text="{Binding SshShareLabel}" Foreground="{StaticResource AccentBrush}"/>
-                                                    </Border>
-                                                </StackPanel>
-                                            </Grid>
-                                        </Border>
-
-                                        <Border Grid.Row="1" Background="#FF0F1520" CornerRadius="22" Margin="0,14,0,0" Padding="0" BorderBrush="#FF1F3348" BorderThickness="1">
-                                            <Grid>
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="*"/>
-                                                    <RowDefinition Height="Auto"/>
-                                                </Grid.RowDefinitions>
-
-                                                <TextBox Grid.Row="0"
-                                                         Text="{Binding OutputText, Mode=OneWay}"
-                                                         IsReadOnly="True"
-                                                         TextChanged="TerminalOutputTextBox_TextChanged"
-                                                         FontFamily="Consolas"
-                                                         FontSize="13"
-                                                         Foreground="#FFD9F7E4"
-                                                         Background="Transparent"
-                                                         BorderThickness="0"
-                                                         AcceptsReturn="True"
-                                                         TextWrapping="Wrap"
-                                                         VerticalScrollBarVisibility="Auto"
-                                                         HorizontalScrollBarVisibility="Auto"
-                                                         Padding="16,16,16,12"/>
-
-                                                <Border Grid.Row="1" Background="#FF111E2C" BorderThickness="0,1,0,0" BorderBrush="#FF203447" Padding="14,10">
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBox Grid.Column="0"
-                                                                 Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
-                                                                 KeyDown="SessionInputTextBox_KeyDown"
-                                                                 Background="#FF162535"
-                                                                 BorderBrush="#FF2B4D66"
-                                                                 Foreground="#FFF5FBFF"
-                                                                 Margin="0"
-                                                                 Padding="10,8"/>
-                                                        <Button Grid.Column="1" Content="执行" Margin="10,0,8,0" Click="ExecuteSessionCommand_Click"/>
-                                                        <Button Grid.Column="2" Content="原始发送" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,8,0" Click="SendRawSessionInput_Click"/>
-                                                        <Button Grid.Column="3" Content="Ctrl+C" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,8,0" Click="InterruptSession_Click"/>
-                                                        <Button Grid.Column="4" Content="关闭" Style="{StaticResource SubtleButtonStyle}" Click="CloseSessionTab_Click"/>
-                                                    </Grid>
-                                                </Border>
-                                            </Grid>
-                                        </Border>
-                                    </Grid>
+                                    <Border Background="#FF0E141C" CornerRadius="20" Margin="0,6,0,0" Padding="0" BorderBrush="#FF1C3446" BorderThickness="1">
+                                        <TextBox Text="{Binding OutputText, Mode=OneWay}"
+                                                 Loaded="TerminalViewport_Loaded"
+                                                 TextChanged="TerminalViewport_TextChanged"
+                                                 PreviewTextInput="TerminalViewport_PreviewTextInput"
+                                                 PreviewKeyDown="TerminalViewport_PreviewKeyDown"
+                                                 FontFamily="Consolas"
+                                                 FontSize="13"
+                                                 Foreground="#FFDDEFE7"
+                                                 CaretBrush="#FFF5FBFF"
+                                                 Background="Transparent"
+                                                 BorderThickness="0"
+                                                 AcceptsReturn="True"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="NoWrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 HorizontalScrollBarVisibility="Auto"
+                                                 Padding="14,14,14,14"/>
+                                    </Border>
                                 </DataTemplate>
                             </TabControl.ContentTemplate>
                         </TabControl>
@@ -432,5 +365,25 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <StatusBar Grid.Row="1" Margin="0,10,0,0">
+            <StatusBarItem Padding="0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock x:Name="ApiSummaryTextBlock" Margin="0,0,14,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="OpenSessionSummaryTextBlock" Grid.Column="1" Margin="0,0,14,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="SelectedSessionStatusTextBlock" Grid.Column="2" Margin="0,0,14,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="CurrentCommandStatusTextBlock" Grid.Column="3" Margin="0,0,14,0" VerticalAlignment="Center" Foreground="{StaticResource AccentBrush}" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="WindowStatusTextBlock" Grid.Column="4" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+                </Grid>
+            </StatusBarItem>
+        </StatusBar>
     </Grid>
 </Window>

@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using LuminChatWin.Core.Models;
 
 namespace LuminChatWin.App;
@@ -51,6 +52,8 @@ public partial class TerminalControlWindow : Window
         RefreshApiSummary();
         ProfileHintTextBlock.Text = "串口会话开启 SSH 共享后会在打开时自动启动桥接，API 共享则决定是否暴露到本地 HTTP API。";
         AgentStatusTextBlock.Text = "Ready";
+        AgentSummaryTextBlock.Text = "未开始执行。选择目标会话、模型和需求后发送给 Agent。";
+        SetWindowStatus("终端工作台已就绪。焦点进入终端正文后可直接输入。", isMuted: true);
     }
 
     private string? SelectedOpenSessionId => (OpenSessionsTabControl.SelectedItem as OpenTerminalSessionViewModel)?.SessionId;
@@ -62,6 +65,7 @@ public partial class TerminalControlWindow : Window
             RefreshApiSummary();
             RefreshModelChoices();
             RefreshProfiles();
+            RefreshSessionSummary();
         });
     }
 
@@ -97,6 +101,7 @@ public partial class TerminalControlWindow : Window
         RefreshAgentTargets();
         RefreshSerialPorts();
         RefreshApiSummary();
+        SetWindowStatus("已刷新会话、串口、Agent 目标与共享状态。", isMuted: true);
     }
 
     private void RefreshOpenSessions_Click(object sender, RoutedEventArgs e)
@@ -170,6 +175,7 @@ public partial class TerminalControlWindow : Window
         {
             _runtime.TerminalProfiles.Rename(profile.ProfileId, dialog.ResponseText.Trim());
             RefreshProfiles(profile.ProfileId);
+            SetWindowStatus($"已重命名配置会话：{dialog.ResponseText.Trim()}", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -193,6 +199,7 @@ public partial class TerminalControlWindow : Window
         {
             _runtime.TerminalProfiles.Delete(profile.ProfileId);
             RefreshProfiles();
+            SetWindowStatus($"已删除配置会话：{profile.Title}", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -211,6 +218,7 @@ public partial class TerminalControlWindow : Window
         {
             _runtime.TerminalProfiles.SetSshShared(profile.ProfileId, !profile.Profile.SshShared);
             RefreshProfiles(profile.ProfileId);
+            SetWindowStatus($"已切换 SSH 共享：{profile.Title}", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -229,6 +237,7 @@ public partial class TerminalControlWindow : Window
         {
             _runtime.TerminalProfiles.SetApiShared(profile.ProfileId, !profile.Profile.ApiShared);
             RefreshProfiles(profile.ProfileId);
+            SetWindowStatus($"已切换 API 共享：{profile.Title}", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -309,6 +318,8 @@ public partial class TerminalControlWindow : Window
             _agentDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
             AgentRequestTextBox.Clear();
             AgentStatusTextBlock.Text = "Agent 正在规划...";
+            AgentSummaryTextBlock.Text = $"目标会话：{targetSessionId} | 模型：{GetSelectedModelKey()}";
+            SetWindowStatus("Agent 正在规划下一步命令。", isMuted: false);
 
             var plan = await _runtime.TerminalAgent.RunStepAsync(
                 targetSessionId,
@@ -321,6 +332,8 @@ public partial class TerminalControlWindow : Window
             {
                 AddAgentTimeline("agent", $"规划失败: {plan.Error}");
                 AgentStatusTextBlock.Text = "规划失败";
+                AgentSummaryTextBlock.Text = plan.Error;
+                SetWindowStatus("Agent 规划失败。", isMuted: false);
                 return;
             }
 
@@ -340,16 +353,21 @@ public partial class TerminalControlWindow : Window
             {
                 AddAgentTimeline("system", $"已执行: {plan.ExecutionResult.Command}");
                 AgentStatusTextBlock.Text = "已自动执行建议命令";
+                AgentSummaryTextBlock.Text = $"已自动执行：{plan.ExecutionResult.Command}";
+                SetWindowStatus("Agent 已自动执行建议命令。", isMuted: false);
                 RefreshOpenSessions(targetSessionId);
             }
             else
             {
                 AgentStatusTextBlock.Text = AgentAutoExecuteCheckBox.IsChecked == true ? "本轮无需执行命令" : "已生成建议命令";
+                AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand) ? "本轮未生成可执行命令。" : $"待确认命令：{plan.SuggestedCommand}";
+                SetWindowStatus("Agent 已生成建议命令。", isMuted: true);
             }
         }
         catch (Exception ex)
         {
             AgentStatusTextBlock.Text = "Agent 执行失败";
+            AgentSummaryTextBlock.Text = ex.Message;
             ShowError(ex);
         }
         finally
@@ -373,6 +391,8 @@ public partial class TerminalControlWindow : Window
                 SuggestedCommandTextBox.Text,
                 TimeSpan.FromSeconds(Math.Max(3, _runtime.Config.Terminal.ExecApi.DefaultTimeoutSeconds)));
             AddAgentTimeline("system", $"手动执行: {result.Command}");
+            AgentSummaryTextBlock.Text = $"已手动执行建议命令：{result.Command}";
+            SetWindowStatus("已手动执行 Agent 建议命令。", isMuted: false);
             RefreshOpenSessions(targetSessionId);
         }
         catch (Exception ex)
@@ -397,6 +417,7 @@ public partial class TerminalControlWindow : Window
             _runtime.SaveConfig(config);
             await _runtime.EnsureTerminalApiStateAsync();
             RefreshApiSummary();
+            SetWindowStatus("已保存共享与 Agent 偏好设置。", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -417,6 +438,7 @@ public partial class TerminalControlWindow : Window
                 SelectedOpenSessionId,
                 string.IsNullOrWhiteSpace(BridgePortTextBox.Text) ? null : ParseInt(BridgePortTextBox.Text, 22000));
             BridgeStatusTextBlock.Text = $"{bridge.Protocol}://{bridge.Host}:{bridge.Port}  {bridge.Message}";
+            SetWindowStatus($"已打开 Bridge：{bridge.Protocol}://{bridge.Host}:{bridge.Port}", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -435,28 +457,103 @@ public partial class TerminalControlWindow : Window
         RefreshAgentTargets();
     }
 
-    private async void ExecuteSessionCommand_Click(object sender, RoutedEventArgs e)
+    private void TerminalViewport_Loaded(object sender, RoutedEventArgs e)
     {
-        if (!TryGetOpenSessionParameter(sender, out var session) || string.IsNullOrWhiteSpace(session.InputText))
+        if (sender is TextBox textBox)
         {
-            return;
+            textBox.ScrollToEnd();
+            textBox.CaretIndex = textBox.Text.Length;
         }
-
-        await ExecuteSessionCommandAsync(session);
     }
 
-    private async void SendRawSessionInput_Click(object sender, RoutedEventArgs e)
+    private void TerminalViewport_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (!TryGetOpenSessionParameter(sender, out var session) || string.IsNullOrWhiteSpace(session.InputText))
+        if (sender is TextBox textBox)
+        {
+            textBox.ScrollToEnd();
+            textBox.CaretIndex = textBox.Text.Length;
+        }
+    }
+
+    private async void TerminalViewport_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (!TryGetOpenSessionParameter(sender, out var session) || string.IsNullOrEmpty(e.Text))
         {
             return;
         }
 
+        e.Handled = true;
+        await SendTerminalInputAsync(session.SessionId, e.Text);
+    }
+
+    private async void TerminalViewport_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (!TryGetOpenSessionParameter(sender, out var session) || sender is not TextBox textBox)
+        {
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
+        {
+            if (!string.IsNullOrEmpty(textBox.SelectedText))
+            {
+                return;
+            }
+
+            e.Handled = true;
+            await SendTerminalInputAsync(session.SessionId, "\u0003");
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.V)
+        {
+            e.Handled = true;
+            var pastedText = Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty;
+            if (!string.IsNullOrEmpty(pastedText))
+            {
+                await SendTerminalInputAsync(session.SessionId, pastedText);
+            }
+            return;
+        }
+
+        if (Keyboard.Modifiers != ModifierKeys.None)
+        {
+            return;
+        }
+
+        var payload = e.Key switch
+        {
+            Key.Enter => "\n",
+            Key.Back => "\x7f",
+            Key.Tab => "\t",
+            Key.Up => "\x1b[A",
+            Key.Down => "\x1b[B",
+            Key.Right => "\x1b[C",
+            Key.Left => "\x1b[D",
+            Key.Home => "\x1b[H",
+            Key.End => "\x1b[F",
+            Key.Insert => "\x1b[2~",
+            Key.Delete => "\x1b[3~",
+            Key.PageUp => "\x1b[5~",
+            Key.PageDown => "\x1b[6~",
+            _ => null,
+        };
+
+        if (payload is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await SendTerminalInputAsync(session.SessionId, payload);
+    }
+
+    private async Task SendTerminalInputAsync(string sessionId, string text)
+    {
         try
         {
-            await _runtime.TerminalSessions.SendInputAsync(session.SessionId, session.InputText);
-            session.InputText = string.Empty;
-            RefreshOpenSessions(session.SessionId);
+            await _runtime.TerminalSessions.SendInputAsync(sessionId, text, recordInHistory: false);
+            SetWindowStatus($"已向终端发送输入：{DescribeInput(text)}", isMuted: true);
         }
         catch (Exception ex)
         {
@@ -464,31 +561,20 @@ public partial class TerminalControlWindow : Window
         }
     }
 
-    private async void InterruptSession_Click(object sender, RoutedEventArgs e)
+    private async Task CloseSessionAsync(string sessionId)
     {
-        if (!TryGetOpenSessionParameter(sender, out var session))
-        {
-            return;
-        }
-
         try
         {
-            await _runtime.TerminalSessions.SendInputAsync(session.SessionId, "\u0003");
+            var session = _runtime.TerminalSessions.GetSession(sessionId);
+            await _runtime.TerminalSessions.StopSessionAsync(sessionId);
+            RefreshOpenSessions();
+            RefreshAgentTargets();
+            SetWindowStatus($"已关闭会话：{session?.Title ?? sessionId}", isMuted: true);
         }
         catch (Exception ex)
         {
             ShowError(ex);
         }
-    }
-
-    private async void CloseSessionTab_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetOpenSessionParameter(sender, out var session))
-        {
-            return;
-        }
-
-        await CloseSessionAsync(session.SessionId);
     }
 
     private async void CloseCurrentSession_Click(object sender, RoutedEventArgs e)
@@ -501,61 +587,6 @@ public partial class TerminalControlWindow : Window
         await CloseSessionAsync(SelectedOpenSessionId);
     }
 
-    private async void SessionInputTextBox_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
-        {
-            return;
-        }
-
-        if ((sender as FrameworkElement)?.DataContext is not OpenTerminalSessionViewModel session || string.IsNullOrWhiteSpace(session.InputText))
-        {
-            return;
-        }
-
-        e.Handled = true;
-        await ExecuteSessionCommandAsync(session);
-    }
-
-    private void TerminalOutputTextBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (sender is TextBox textBox)
-        {
-            textBox.ScrollToEnd();
-        }
-    }
-
-    private async Task ExecuteSessionCommandAsync(OpenTerminalSessionViewModel session)
-    {
-        try
-        {
-            await _runtime.TerminalSessions.ExecuteCommandAsync(
-                session.SessionId,
-                session.InputText,
-                TimeSpan.FromSeconds(Math.Max(3, _runtime.Config.Terminal.ExecApi.DefaultTimeoutSeconds)));
-            session.InputText = string.Empty;
-            RefreshOpenSessions(session.SessionId);
-        }
-        catch (Exception ex)
-        {
-            ShowError(ex);
-        }
-    }
-
-    private async Task CloseSessionAsync(string sessionId)
-    {
-        try
-        {
-            await _runtime.TerminalSessions.StopSessionAsync(sessionId);
-            RefreshOpenSessions();
-            RefreshAgentTargets();
-        }
-        catch (Exception ex)
-        {
-            ShowError(ex);
-        }
-    }
-
     private void SaveProfile(TerminalSessionProfile profile, bool openAfterSave)
     {
         try
@@ -565,6 +596,7 @@ public partial class TerminalControlWindow : Window
             _loadedProfileId = saved.ProfileId;
             _loadedProfileKind = saved.Kind;
             ProfileHintTextBlock.Text = $"已保存 {saved.KindLabel} 配置：{saved.Title}";
+            SetWindowStatus($"已保存配置会话：{saved.Title}", isMuted: true);
             if (openAfterSave)
             {
                 _ = OpenProfileAsync(saved);
@@ -643,6 +675,7 @@ public partial class TerminalControlWindow : Window
             RefreshOpenSessions(session.SessionId);
             RefreshAgentTargets(session.SessionId);
             RefreshApiSummary();
+            SetWindowStatus($"已打开会话：{profile.Title}", isMuted: false);
         }
         catch (Exception ex)
         {
@@ -668,7 +701,6 @@ public partial class TerminalControlWindow : Window
     private void RefreshOpenSessions(string? selectedSessionId = null)
     {
         var selected = selectedSessionId ?? SelectedOpenSessionId;
-        var cachedInputs = _openSessions.ToDictionary(item => item.SessionId, item => item.InputText, StringComparer.OrdinalIgnoreCase);
         _openSessions.Clear();
 
         foreach (var session in _runtime.TerminalSessions.ListSessions())
@@ -678,7 +710,6 @@ public partial class TerminalControlWindow : Window
                 OutputText = _runtime.TerminalSessions.GetRecentOutput(session.SessionId),
                 CurrentCommandText = BuildCurrentCommandText(session.SessionId),
                 MetaLine = BuildMetaLine(session),
-                InputText = cachedInputs.TryGetValue(session.SessionId, out var input) ? input : string.Empty,
             });
         }
 
@@ -724,8 +755,8 @@ public partial class TerminalControlWindow : Window
     private void RefreshApiSummary()
     {
         ApiSummaryTextBlock.Text = _runtime.TerminalApiServer.IsRunning
-            ? $"已运行: {_runtime.TerminalApiServer.BaseUrl}"
-            : $"已关闭: http://{ApiHostTextBox.Text}:{ApiPortTextBox.Text}/";
+            ? $"API: {_runtime.TerminalApiServer.BaseUrl}"
+            : $"API: 已关闭 http://{ApiHostTextBox.Text}:{ApiPortTextBox.Text}/";
         ApiEndpointsTextBlock.Text =
             "GET /api/sessions\nGET /api/sessions/{id}/history\nGET /api/sessions/{id}/current-output\nPOST /api/exec_cmd\nPOST /api/send_input\nPOST /api/bridge/open";
         RefreshSessionSummary();
@@ -762,8 +793,12 @@ public partial class TerminalControlWindow : Window
         var selected = OpenSessionsTabControl.SelectedItem as OpenTerminalSessionViewModel;
         OpenSessionSummaryTextBlock.Text = $"打开中的会话: {_openSessions.Count} 个，API 共享 {_openSessions.Count(item => item.IsApiShared)} 个。";
         SessionDeckMetaTextBlock.Text = selected is null
-            ? "没有选中的活动终端标签。"
-            : $"当前标签: {selected.Title} · {selected.Descriptor}";
+            ? "选择一个已打开标签；输入焦点在终端正文时可直接输入。"
+            : $"{selected.Title} · 直接在终端正文输入；Ctrl+V 粘贴，Ctrl+C 无选区时发送中断。";
+        SelectedSessionStatusTextBlock.Text = selected is null
+            ? "未选中终端会话。"
+            : $"当前会话: {selected.Title} | {selected.Descriptor} | {selected.ApiShareLabel} | {selected.SshShareLabel}";
+        CurrentCommandStatusTextBlock.Text = selected is null ? "当前没有正在执行的命令。" : TrimForSingleLine(selected.CurrentCommandText);
     }
 
     private void PersistAgentPreferences()
@@ -792,6 +827,7 @@ public partial class TerminalControlWindow : Window
             _agentTimeline.RemoveAt(0);
         }
         AgentTimelineListBox.ScrollIntoView(_agentTimeline.LastOrDefault());
+        AgentSummaryTextBlock.Text = $"最近事件: {content}";
     }
 
     private void LoadProfileIntoForms(TerminalSessionProfile profile)
@@ -839,6 +875,7 @@ public partial class TerminalControlWindow : Window
         }
 
         ProfileHintTextBlock.Text = $"已将“{profile.Title}”加载到连接表单；再次保存会覆盖原配置。";
+        SetWindowStatus($"已加载配置会话到连接表单：{profile.Title}", isMuted: true);
     }
 
     private TerminalSessionProfile BuildPowerShellProfile()
@@ -927,7 +964,7 @@ public partial class TerminalControlWindow : Window
     {
         var current = _runtime.TerminalSessions.GetCurrentCommandOutput(sessionId);
         return current.IsRunning
-            ? $"当前执行: {current.Command}\n输出片段: {TrimForSingleLine(current.Output)}"
+            ? $"当前执行: {current.Command} | 输出片段: {TrimForSingleLine(current.Output)}"
             : "当前没有正在执行的命令。";
     }
 
@@ -962,8 +999,29 @@ public partial class TerminalControlWindow : Window
         return compact.Length <= 120 ? compact : compact[..120] + "...";
     }
 
+    private static string DescribeInput(string text)
+    {
+        return text switch
+        {
+            "\n" => "Enter",
+            "\t" => "Tab",
+            "\x7f" => "Backspace",
+            "\u0003" => "Ctrl+C",
+            _ => TrimForSingleLine(text),
+        };
+    }
+
+    private void SetWindowStatus(string message, bool isMuted)
+    {
+        WindowStatusTextBlock.Text = message;
+        WindowStatusTextBlock.Foreground = isMuted
+            ? (Brush)FindResource("MutedBrush")
+            : (Brush)FindResource("AccentBrush");
+    }
+
     private void ShowError(Exception ex)
     {
+        SetWindowStatus(ex.Message, isMuted: false);
         MessageBox.Show(this, ex.Message, "终端控制", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
@@ -987,7 +1045,6 @@ public partial class TerminalControlWindow : Window
     private sealed class OpenTerminalSessionViewModel : INotifyPropertyChanged
     {
         private string _outputText = string.Empty;
-        private string _inputText = string.Empty;
         private string _currentCommandText = string.Empty;
         private string _metaLine = string.Empty;
 
@@ -1011,12 +1068,6 @@ public partial class TerminalControlWindow : Window
         {
             get => _outputText;
             set => SetField(ref _outputText, value);
-        }
-
-        public string InputText
-        {
-            get => _inputText;
-            set => SetField(ref _inputText, value);
         }
 
         public string CurrentCommandText

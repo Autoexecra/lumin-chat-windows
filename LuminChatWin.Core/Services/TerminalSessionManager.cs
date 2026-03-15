@@ -3,12 +3,16 @@ using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using LuminChatWin.Core.Models;
 
 namespace LuminChatWin.Core.Services;
 
 public sealed class TerminalSessionManager : IAsyncDisposable
 {
+    private static readonly Regex AnsiControlSequenceRegex = new("\\x1B\\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
+    private static readonly Regex AnsiOperatingSystemCommandRegex = new("\\x1B\\][^\\a]*(\\a|\\x1B\\\\)", RegexOptions.Compiled);
+    private static readonly Regex DescriptorNumberRegex = new("(\\d+)", RegexOptions.Compiled);
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<TerminalFeatureConfig> _configAccessor;
     private readonly ConcurrentDictionary<string, SerialBridgeState> _bridges = new(StringComparer.OrdinalIgnoreCase);
@@ -69,7 +73,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         var session = GetRequiredSession(sessionId);
         lock (session.SyncRoot)
         {
-            var text = string.Concat(session.RecentOutputLines);
+            var text = session.RenderedOutput.ToString();
             if (text.Length <= maxChars)
             {
                 return text;
@@ -120,11 +124,14 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         return await AddSessionAsync(options.Title, TerminalSessionKind.Serial, $"{options.PortName} @ {options.BaudRate}", true, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task SendInputAsync(string sessionId, string text, CancellationToken cancellationToken = default)
+    public async Task SendInputAsync(string sessionId, string text, CancellationToken cancellationToken = default, bool recordInHistory = true)
     {
         var session = GetRequiredSession(sessionId);
         await session.Backend.SendAsync(text, cancellationToken).ConfigureAwait(false);
-        AppendHistory(session, TerminalHistoryEntryKind.Command, text.TrimEnd('\r', '\n'));
+        if (recordInHistory)
+        {
+            AppendHistory(session, TerminalHistoryEntryKind.Command, text.TrimEnd('\r', '\n'));
+        }
     }
 
     public async Task<TerminalCommandResult> ExecuteCommandAsync(string sessionId, string command, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -302,23 +309,35 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return;
         }
 
+        var normalizedText = kind is TerminalHistoryEntryKind.Output or TerminalHistoryEntryKind.Error
+            ? NormalizeCommandOutput(text)
+            : NormalizeNonTerminalText(text);
+
         lock (session.SyncRoot)
         {
+            if (kind is TerminalHistoryEntryKind.Output or TerminalHistoryEntryKind.Error)
+            {
+                ApplyTerminalChunk(session, text);
+                TrimRecentOutput(session);
+            }
+            else
+            {
+                session.RenderedOutput.Append(normalizedText);
+                var lastNewline = session.RenderedOutput.ToString().LastIndexOf('\n');
+                session.CurrentLineStartIndex = lastNewline >= 0 ? lastNewline + 1 : 0;
+                TrimRecentOutput(session);
+            }
+
             session.Info.LastActivityAt = DateTime.UtcNow.ToString("O");
             session.History.Add(new TerminalHistoryEntry
             {
                 Kind = kind,
-                Text = text,
+                Text = normalizedText,
             });
             TrimHistory(session.History);
-            foreach (var line in SplitLinesPreservingDelimiter(text))
-            {
-                session.RecentOutputLines.Add(line);
-            }
-            TrimRecentOutput(session.RecentOutputLines);
             if (session.ActiveCommandBuffer is not null)
             {
-                session.ActiveCommandBuffer.Append(text);
+                session.ActiveCommandBuffer.Append(NormalizeCommandOutput(text));
                 session.LastCommandOutputAt = DateTime.UtcNow;
             }
         }
@@ -345,12 +364,16 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
-    private void TrimRecentOutput(List<string> lines)
+    private void TrimRecentOutput(SessionState session)
     {
-        var overflow = lines.Count - Math.Max(100, Config.RecentOutputMaxLines);
+        var maxChars = Math.Max(16000, Math.Max(100, Config.RecentOutputMaxLines) * 256);
+        var overflow = session.RenderedOutput.Length - maxChars;
         if (overflow > 0)
         {
-            lines.RemoveRange(0, overflow);
+            session.RenderedOutput.Remove(0, overflow);
+            session.CurrentLineStartIndex = Math.Max(0, session.CurrentLineStartIndex - overflow);
+            var lastNewline = session.RenderedOutput.ToString().LastIndexOf('\n');
+            session.CurrentLineStartIndex = lastNewline >= 0 ? lastNewline + 1 : 0;
         }
     }
 
@@ -478,28 +501,137 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return explicitPort;
         }
 
-        var prefix = int.TryParse(config.SerialSshBridge.PortPrefix, out var parsedPrefix) ? parsedPrefix : 22;
-        return int.Parse($"{prefix}{Math.Abs(info.SessionId.GetHashCode()) % 1000:000}");
+        return BuildDefaultBridgePort(config.SerialSshBridge.PortPrefix, info.Descriptor, info.SessionId);
     }
 
-    private static IEnumerable<string> SplitLinesPreservingDelimiter(string text)
+    internal static int BuildDefaultBridgePort(string portPrefix, string descriptor, string sessionId)
+    {
+        var prefix = int.TryParse(portPrefix, out var parsedPrefix) ? parsedPrefix : 22;
+        var numericSuffix = ResolveDescriptorPortSuffix(descriptor);
+        if (numericSuffix >= 0)
+        {
+            return int.Parse($"{prefix}{numericSuffix:00}");
+        }
+
+        return int.Parse($"{prefix}{Math.Abs(sessionId.GetHashCode()) % 100:00}");
+    }
+
+    internal static int ResolveDescriptorPortSuffix(string descriptor)
+    {
+        if (string.IsNullOrWhiteSpace(descriptor))
+        {
+            return -1;
+        }
+
+        var descriptorHead = descriptor.Split('@', 2, StringSplitOptions.TrimEntries)[0];
+        var matches = DescriptorNumberRegex.Matches(descriptorHead);
+        if (matches.Count == 0)
+        {
+            return -1;
+        }
+
+        var digits = matches[^1].Value;
+        if (!int.TryParse(digits, out var numericValue))
+        {
+            return -1;
+        }
+
+        return Math.Abs(numericValue % 100);
+    }
+
+    internal static string RenderTerminalPreview(params string[] chunks)
+    {
+        var buffer = new StringBuilder();
+        var currentLineStartIndex = 0;
+        var pendingCarriageReturn = false;
+        foreach (var chunk in chunks)
+        {
+            ApplyTerminalChunk(buffer, ref currentLineStartIndex, ref pendingCarriageReturn, chunk);
+        }
+
+        return buffer.ToString();
+    }
+
+    private static void ApplyTerminalChunk(SessionState session, string text)
+    {
+        var currentLineStartIndex = session.CurrentLineStartIndex;
+        var pendingCarriageReturn = session.PendingCarriageReturn;
+        ApplyTerminalChunk(session.RenderedOutput, ref currentLineStartIndex, ref pendingCarriageReturn, text);
+        session.CurrentLineStartIndex = currentLineStartIndex;
+        session.PendingCarriageReturn = pendingCarriageReturn;
+    }
+
+    private static void ApplyTerminalChunk(StringBuilder buffer, ref int currentLineStartIndex, ref bool pendingCarriageReturn, string text)
+    {
+        if (pendingCarriageReturn)
+        {
+            text = "\r" + text;
+            pendingCarriageReturn = false;
+        }
+
+        if (text.EndsWith('\r'))
+        {
+            pendingCarriageReturn = true;
+            text = text[..^1];
+        }
+
+        var stripped = StripAnsiSequences(text).Replace("\r\n", "\n", StringComparison.Ordinal);
+        foreach (var ch in stripped)
+        {
+            switch (ch)
+            {
+                case '\a':
+                    break;
+                case '\b':
+                    if (buffer.Length > currentLineStartIndex)
+                    {
+                        buffer.Length--;
+                    }
+                    break;
+                case '\r':
+                    if (currentLineStartIndex <= buffer.Length)
+                    {
+                        buffer.Length = currentLineStartIndex;
+                    }
+                    break;
+                default:
+                    buffer.Append(ch);
+                    if (ch == '\n')
+                    {
+                        currentLineStartIndex = buffer.Length;
+                    }
+                    break;
+            }
+        }
+    }
+
+    private static string NormalizeCommandOutput(string text)
+    {
+        return StripAnsiSequences(text)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\a", string.Empty, StringComparison.Ordinal)
+            .Replace("\b", string.Empty, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeNonTerminalText(string text)
+    {
+        return StripAnsiSequences(text)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal)
+            .Replace("\a", string.Empty, StringComparison.Ordinal);
+    }
+
+    private static string StripAnsiSequences(string text)
     {
         if (string.IsNullOrEmpty(text))
         {
-            yield break;
+            return string.Empty;
         }
 
-        using var reader = new StringReader(text);
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
-        {
-            yield return line + Environment.NewLine;
-        }
-
-        if (!text.EndsWith("\n", StringComparison.Ordinal) && !text.EndsWith("\r", StringComparison.Ordinal))
-        {
-            yield return string.Empty;
-        }
+        return AnsiControlSequenceRegex.Replace(
+            AnsiOperatingSystemCommandRegex.Replace(text, string.Empty),
+            string.Empty);
     }
 
     private sealed class SessionState
@@ -514,12 +646,14 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         public TerminalSessionInfo Info { get; }
         public ITerminalBackend Backend { get; }
         public List<TerminalHistoryEntry> History { get; } = [];
-        public List<string> RecentOutputLines { get; } = [];
+        public StringBuilder RenderedOutput { get; } = new();
         public SemaphoreSlim CommandLock { get; } = new(1, 1);
         public StringBuilder? ActiveCommandBuffer { get; set; }
         public string ActiveCommandText { get; set; } = string.Empty;
         public string ActiveCommandStartedAt { get; set; } = string.Empty;
         public DateTime? LastCommandOutputAt { get; set; }
+        public int CurrentLineStartIndex { get; set; }
+        public bool PendingCarriageReturn { get; set; }
     }
 
     private sealed class SerialBridgeState : IAsyncDisposable

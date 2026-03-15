@@ -10,6 +10,32 @@ namespace LuminChatWin.Tests;
 public sealed class TerminalServicesTests
 {
     [Fact]
+    public void TerminalSessionManager_RenderTerminalPreview_StripsAnsiAndHandlesCarriageReturn()
+    {
+        var rendered = TerminalSessionManager.RenderTerminalPreview(
+            "\u001b[32mok3568 ~\u001b[m # ",
+            "ifconfig",
+            "\r\n",
+            "done\r",
+            "ready\r\n");
+
+        Assert.DoesNotContain("\u001b", rendered, StringComparison.Ordinal);
+        Assert.Contains("ok3568 ~ # ifconfig", rendered, StringComparison.Ordinal);
+        Assert.Contains("ready", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("done", rendered, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("22", "COM1 @ 115200", "session-a", 2201)]
+    [InlineData("22", "COM12 @ 115200", "session-b", 2212)]
+    [InlineData("22", "ttyUSB105 @ 115200", "session-c", 2205)]
+    public void TerminalSessionManager_BuildDefaultBridgePort_UsesTwoDigitSerialSuffix(string prefix, string descriptor, string sessionId, int expectedPort)
+    {
+        var port = TerminalSessionManager.BuildDefaultBridgePort(prefix, descriptor, sessionId);
+        Assert.Equal(expectedPort, port);
+    }
+
+    [Fact]
     public async Task TerminalSessionManager_ExecutesPowerShellCommand()
     {
         var config = AppConfig.CreateDefault();

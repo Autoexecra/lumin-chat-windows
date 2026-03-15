@@ -1,52 +1,37 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Build both Debug and Release configurations for the solution.
-set SOLUTION=%~dp0LuminChatWin.sln
+REM Publish both Debug and Release configurations as single-file Windows executables.
+set APP_PROJECT=%~dp0LuminChatWin.App\LuminChatWin.App.csproj
 set ROOT=%~dp0
-set DEBUG_SRC=%ROOT%LuminChatWin.App\bin\Debug\net8.0-windows
-set RELEASE_SRC=%ROOT%LuminChatWin.App\bin\Release\net8.0-windows
 set OUTPUT_DIR=%ROOT%output
+set DEBUG_SRC=%OUTPUT_DIR%\Debug
+set RELEASE_SRC=%OUTPUT_DIR%\Release
+set PUBLISH_ARGS=-r win-x64 --self-contained false -p:PublishSingleFile=true
 
 echo ==================================================
-echo Building Debug configuration...
-dotnet build "%SOLUTION%" -c Debug
-if errorlevel 1 (
-  echo.
-  echo [ERROR] Debug build failed.
-  goto :error
-)
-echo.
-echo Building Release configuration...
-dotnet build "%SOLUTION%" -c Release
-if errorlevel 1 (
-  echo.
-  echo [ERROR] Release build failed.
-  goto :error
-)
-echo.
-echo [SUCCESS] Both Debug and Release builds succeeded.
 echo Preparing output directory...
 if exist "%OUTPUT_DIR%" rmdir /s /q "%OUTPUT_DIR%"
 mkdir "%OUTPUT_DIR%\Debug"
 mkdir "%OUTPUT_DIR%\Release"
 
-echo Copying Debug artifacts...
-xcopy "%DEBUG_SRC%\*" "%OUTPUT_DIR%\Debug\" /e /i /y >nul
+echo Publishing Debug configuration...
+dotnet publish "%APP_PROJECT%" -c Debug %PUBLISH_ARGS% -o "%DEBUG_SRC%"
 if errorlevel 1 (
-  echo [ERROR] Failed to copy Debug artifacts.
-  goto :error
-)
-
-echo Copying Release artifacts...
-xcopy "%RELEASE_SRC%\*" "%OUTPUT_DIR%\Release\" /e /i /y >nul
-if errorlevel 1 (
-  echo [ERROR] Failed to copy Release artifacts.
+  echo [ERROR] Debug publish failed.
   goto :error
 )
 
 echo.
-echo [SUCCESS] Build artifacts copied to %OUTPUT_DIR%
+echo Publishing Release configuration...
+dotnet publish "%APP_PROJECT%" -c Release %PUBLISH_ARGS% -o "%RELEASE_SRC%"
+if errorlevel 1 (
+  echo [ERROR] Release publish failed.
+  goto :error
+)
+
+echo.
+echo [SUCCESS] Published single-file app artifacts to %OUTPUT_DIR%
 exit /b 0
 
 :error
