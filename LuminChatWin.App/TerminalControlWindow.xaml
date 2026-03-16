@@ -8,7 +8,7 @@
         Height="980"
         MinWidth="1380"
         MinHeight="860"
-        WindowStartupLocation="CenterOwner">
+        WindowStartupLocation="CenterScreen">
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -367,6 +367,10 @@
                             <TextBlock x:Name="SessionDeckMetaTextBlock" Margin="0,2,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="LLM 配置" Style="{StaticResource SubtleButtonStyle}" Click="OpenLlmConfig_Click"/>
+                            <Button Content="综合配置" Style="{StaticResource SubtleButtonStyle}" Click="OpenSettings_Click"/>
+                            <ComboBox x:Name="ThemeComboBox" Width="180" Margin="0,0,8,0" SelectionChanged="ThemeComboBox_SelectionChanged"/>
+                            <Button Content="切换工作区" Style="{StaticResource SubtleButtonStyle}" Click="ChangeWorkspace_Click"/>
                             <Button Content="刷新会话" Click="RefreshOpenSessions_Click"/>
                             <Button Content="关闭当前会话" Style="{StaticResource SubtleButtonStyle}" Click="CloseCurrentSession_Click"/>
                         </StackPanel>

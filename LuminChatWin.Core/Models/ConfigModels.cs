@@ -233,6 +233,18 @@ public sealed class TerminalSerialBridgeConfig
     [JsonPropertyName("port_prefix")]
     public string PortPrefix { get; set; } = "22";
 
+    [JsonPropertyName("username")]
+    public string Username { get; set; } = "root";
+
+    [JsonPropertyName("password")]
+    public string Password { get; set; } = "root";
+
+    [JsonPropertyName("exec_timeout_s")]
+    public double ExecTimeoutSeconds { get; set; } = 15;
+
+    [JsonPropertyName("host_key_path")]
+    public string HostKeyPath { get; set; } = "~/.lumin-chat-win/terminal-serial-bridge-hostkey.pem";
+
     [JsonPropertyName("port_overrides")]
     public Dictionary<string, int> PortOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

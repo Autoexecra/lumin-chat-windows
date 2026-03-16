@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Ports;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using LuminChatWin.Core.Models;
@@ -241,6 +240,11 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
         if (_bridges.TryRemove(sessionId, out var bridge))
         {
+            if (bridge.SessionOutputHandler is not null)
+            {
+                OutputReceived -= bridge.SessionOutputHandler;
+            }
+
             await bridge.DisposeAsync().ConfigureAwait(false);
         }
 
@@ -271,19 +275,38 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
 
         var port = requestedPort ?? ResolveBridgePort(session.Info);
-        var listener = new TcpListener(bindAddress, port);
-        listener.Start();
+        var bridgeServer = new SerialSshBridgeServer(
+            sessionId,
+            bindAddress,
+            port,
+            config.SerialSshBridge,
+            (text, token) => session.Backend.SendAsync(text, token),
+            (commandText, timeout, token) => ExecuteCommandAsync(sessionId, commandText, timeout, token));
 
-        var bridgeState = new SerialBridgeState(listener, sessionId, host, port, session);
+        var bridgeState = new SerialBridgeState(bridgeServer, sessionId, session);
         if (!_bridges.TryAdd(sessionId, bridgeState))
         {
-            listener.Stop();
+            await bridgeServer.DisposeAsync().ConfigureAwait(false);
             return _bridges[sessionId].Info;
         }
 
-        bridgeState.AcceptLoopTask = Task.Run(() => AcceptBridgeLoopAsync(bridgeState, cancellationToken), cancellationToken);
-        AppendHistory(session, TerminalHistoryEntryKind.System, $"Serial bridge listening on {host}:{port} (raw TCP relay)");
-        return bridgeState.Info;
+        bridgeState.SessionOutputHandler = (_, args) => bridgeState.Bridge.HandleTerminalOutput(args);
+        OutputReceived += bridgeState.SessionOutputHandler;
+        bridgeServer.ExceptionRaised += (_, ex) => AppendHistory(session, TerminalHistoryEntryKind.System, $"Serial SSH bridge error: {ex.Message}");
+
+        try
+        {
+            bridgeServer.Start();
+            AppendHistory(session, TerminalHistoryEntryKind.System, $"Serial SSH bridge listening on {host}:{port} for {config.SerialSshBridge.Username}");
+            return bridgeState.Info;
+        }
+        catch
+        {
+            OutputReceived -= bridgeState.SessionOutputHandler;
+            _bridges.TryRemove(sessionId, out _);
+            await bridgeState.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -429,95 +452,6 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             IsApiShared = source.IsApiShared,
             IsSshShared = source.IsSshShared,
         };
-    }
-
-    private async Task AcceptBridgeLoopAsync(SerialBridgeState state, CancellationToken cancellationToken)
-    {
-        state.SessionOutputHandler = (_, args) =>
-        {
-            if (!string.Equals(args.SessionId, state.SessionId, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            var payload = Encoding.UTF8.GetBytes(args.Text);
-            lock (state.Clients)
-            {
-                foreach (var client in state.Clients.ToList())
-                {
-                    try
-                    {
-                        client.GetStream().Write(payload, 0, payload.Length);
-                    }
-                    catch
-                    {
-                        client.Dispose();
-                        state.Clients.Remove(client);
-                    }
-                }
-            }
-        };
-        OutputReceived += state.SessionOutputHandler;
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                var client = await state.Listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
-                lock (state.Clients)
-                {
-                    state.Clients.Add(client);
-                }
-
-                _ = Task.Run(() => BridgeClientLoopAsync(state, client, cancellationToken), cancellationToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        finally
-        {
-            if (state.SessionOutputHandler is not null)
-            {
-                OutputReceived -= state.SessionOutputHandler;
-            }
-        }
-    }
-
-    private async Task BridgeClientLoopAsync(SerialBridgeState state, TcpClient client, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var stream = client.GetStream();
-            var buffer = new byte[2048];
-            var welcome = Encoding.UTF8.GetBytes($"Serial bridge for session {state.SessionId}. Raw TCP relay preview.\r\n");
-            await stream.WriteAsync(welcome, cancellationToken).ConfigureAwait(false);
-            while (!cancellationToken.IsCancellationRequested && client.Connected)
-            {
-                var bytesRead = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-                if (bytesRead <= 0)
-                {
-                    break;
-                }
-
-                var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                await state.Session.Backend.SendAsync(text, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch
-        {
-        }
-        finally
-        {
-            lock (state.Clients)
-            {
-                state.Clients.Remove(client);
-            }
-            client.Dispose();
-        }
     }
 
     private int ResolveBridgePort(TerminalSessionInfo info)
@@ -702,51 +636,23 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
     private sealed class SerialBridgeState : IAsyncDisposable
     {
-        public SerialBridgeState(TcpListener listener, string sessionId, string host, int port, SessionState session)
+        public SerialBridgeState(SerialSshBridgeServer bridge, string sessionId, SessionState session)
         {
-            Listener = listener;
+            Bridge = bridge;
             SessionId = sessionId;
             Session = session;
-            Info = new TerminalBridgeInfo
-            {
-                SessionId = sessionId,
-                Host = host,
-                Port = port,
-                Protocol = "tcp-raw",
-                Message = "Raw TCP relay for serial sessions. SSH clients are not supported by this relay.",
-            };
+            Info = bridge.Info;
         }
 
-        public TcpListener Listener { get; }
+        public SerialSshBridgeServer Bridge { get; }
         public string SessionId { get; }
         public SessionState Session { get; }
         public TerminalBridgeInfo Info { get; }
-        public List<TcpClient> Clients { get; } = [];
-        public Task? AcceptLoopTask { get; set; }
         public EventHandler<TerminalOutputEventArgs>? SessionOutputHandler { get; set; }
 
         public async ValueTask DisposeAsync()
         {
-            Listener.Stop();
-            if (AcceptLoopTask is not null)
-            {
-                try
-                {
-                    await AcceptLoopTask.ConfigureAwait(false);
-                }
-                catch
-                {
-                }
-            }
-
-            lock (Clients)
-            {
-                foreach (var client in Clients)
-                {
-                    client.Dispose();
-                }
-                Clients.Clear();
-            }
+            await Bridge.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

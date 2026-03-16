@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using LuminChatWin.Core.Models;
 using LuminChatWin.Core.Services;
+using Renci.SshNet;
 
 namespace LuminChatWin.Tests;
 
@@ -213,6 +215,95 @@ public sealed class TerminalServicesTests
         }
     }
 
+    [Fact]
+    public async Task SerialSshBridgeServer_ExecCommand_ReturnsCommandOutput()
+    {
+        var port = GetFreePort();
+        var config = new TerminalSerialBridgeConfig
+        {
+            Username = "root",
+            Password = "root",
+            HostKeyPath = Path.Combine(CreateTempDirectory(), "bridge-hostkey.pem"),
+        };
+        string? receivedCommand = null;
+        await using var bridge = new SerialSshBridgeServer(
+            "session-exec",
+            IPAddress.Loopback,
+            port,
+            config,
+            (_, _) => Task.CompletedTask,
+            (commandText, _, _) =>
+            {
+                receivedCommand = commandText;
+                return Task.FromResult(new TerminalCommandResult
+                {
+                    Success = true,
+                    Command = commandText,
+                    Output = "bridge-exec-ok\n",
+                });
+            });
+
+        bridge.Start();
+
+        using var client = new SshClient("127.0.0.1", port, config.Username, config.Password);
+        client.Connect();
+        var command = client.CreateCommand("echo bridge");
+        var output = command.Execute();
+
+        Assert.Equal("echo bridge", receivedCommand);
+        Assert.Contains("bridge-exec-ok", output, StringComparison.Ordinal);
+        Assert.Equal<uint>(0, (uint)command.ExitStatus);
+
+        client.Disconnect();
+    }
+
+    [Fact]
+    public async Task SerialSshBridgeServer_ShellSession_ForwardsInputAndOutput()
+    {
+        var port = GetFreePort();
+        var config = new TerminalSerialBridgeConfig
+        {
+            Username = "root",
+            Password = "root",
+            HostKeyPath = Path.Combine(CreateTempDirectory(), "bridge-shell-hostkey.pem"),
+        };
+        var receivedInput = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var bridge = new SerialSshBridgeServer(
+            "session-shell",
+            IPAddress.Loopback,
+            port,
+            config,
+            (text, _) =>
+            {
+                receivedInput.TrySetResult(text);
+                return Task.CompletedTask;
+            },
+            (_, _, _) => Task.FromResult(new TerminalCommandResult { Success = true }));
+
+        bridge.Start();
+
+        using var client = new SshClient("127.0.0.1", port, config.Username, config.Password);
+        client.Connect();
+        using var stream = client.CreateShellStream("xterm", 80, 24, 800, 600, 1024);
+
+        stream.Write("status\n");
+        stream.Flush();
+        var forwardedInput = await receivedInput.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains("status", forwardedInput, StringComparison.Ordinal);
+
+        bridge.HandleTerminalOutput(new TerminalOutputEventArgs
+        {
+            SessionId = "session-shell",
+            Kind = TerminalHistoryEntryKind.Output,
+            Text = "shell-output\r\n",
+        });
+
+        var shellOutput = ReadUntilContains(stream, "shell-output", TimeSpan.FromSeconds(5));
+        Assert.Contains("shell-output", shellOutput, StringComparison.Ordinal);
+
+        client.Disconnect();
+    }
+
     private static int GetFreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -227,6 +318,29 @@ public sealed class TerminalServicesTests
         var path = Path.Combine(Path.GetTempPath(), "LuminChatWinTerminalTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private static string ReadUntilContains(ShellStream stream, string expectedText, TimeSpan timeout)
+    {
+        var buffer = new StringBuilder();
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (stream.DataAvailable)
+            {
+                buffer.Append(stream.Read());
+                if (buffer.ToString().Contains(expectedText, StringComparison.Ordinal))
+                {
+                    return buffer.ToString();
+                }
+            }
+            else
+            {
+                Thread.Sleep(50);
+            }
+        }
+
+        return buffer.ToString();
     }
 
     private sealed class FakeTerminalAgentChatCompletionClient(params LlmResponse[] responses) : IChatCompletionClient

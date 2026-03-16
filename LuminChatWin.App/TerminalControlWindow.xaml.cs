@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using LuminChatWin.Core.Models;
 using LuminChatWin.Core.Services;
+using Microsoft.Win32;
 
 namespace LuminChatWin.App;
 
@@ -33,6 +34,10 @@ public partial class TerminalControlWindow : Window
         ProfilesListBox.ItemsSource = _profiles;
         OpenSessionsTabControl.ItemsSource = _openSessions;
         AgentTimelineListBox.ItemsSource = _agentTimeline;
+        ThemeComboBox.ItemsSource = ThemeManager.Themes;
+        ThemeComboBox.DisplayMemberPath = nameof(ThemePalette.Name);
+        ThemeComboBox.SelectedValuePath = nameof(ThemePalette.Id);
+        ThemeComboBox.SelectedValue = runtime.Config.App.ThemeId;
 
         PowerShellProgramTextBox.Text = runtime.Config.Terminal.DefaultPowershellProgram;
         PowerShellArgsTextBox.Text = runtime.Config.Terminal.DefaultPowershellArgs;
@@ -68,6 +73,7 @@ public partial class TerminalControlWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
+            ThemeComboBox.SelectedValue = _runtime.Config.App.ThemeId;
             RefreshApiSummary();
             RefreshModelChoices();
             RefreshProfiles();
@@ -118,6 +124,60 @@ public partial class TerminalControlWindow : Window
     private void RefreshOpenSessions_Click(object sender, RoutedEventArgs e)
     {
         RefreshOpenSessions();
+    }
+
+    private void OpenLlmConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new LlmConfigWindow(_runtime)
+        {
+            Owner = this,
+        };
+        window.Show();
+    }
+
+    private void OpenSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new SettingsWindow(_runtime)
+        {
+            Owner = this,
+        };
+        window.Show();
+    }
+
+    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded || ThemeComboBox.SelectedValue is not string themeId || string.IsNullOrWhiteSpace(themeId))
+        {
+            return;
+        }
+
+        if (string.Equals(_runtime.Config.App.ThemeId, themeId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var config = _runtime.ConfigService.LoadOrCreate();
+        config.App.ThemeId = themeId;
+        _runtime.SaveConfig(config);
+        SetWindowStatus($"已切换主题：{ThemeManager.GetTheme(themeId).Name}", isMuted: true);
+    }
+
+    private void ChangeWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Multiselect = false,
+            Title = "选择工作区目录",
+            InitialDirectory = _runtime.WorkspaceRoot,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _runtime.SetWorkspaceRoot(dialog.FolderName);
+        SetWindowStatus($"工作区已切换到：{_runtime.WorkspaceRoot}", isMuted: false);
     }
 
     private void RefreshAgentTargets_Click(object sender, RoutedEventArgs e)

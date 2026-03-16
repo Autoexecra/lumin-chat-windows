@@ -24,9 +24,9 @@ public partial class App : Application
 			return;
 		}
 
-		var mainWindow = new MainWindow(Runtime);
-		MainWindow = mainWindow;
-		mainWindow.Show();
+		var terminalWindow = new TerminalControlWindow(Runtime);
+		MainWindow = terminalWindow;
+		terminalWindow.Show();
 	}
 
 	protected override void OnExit(ExitEventArgs e)

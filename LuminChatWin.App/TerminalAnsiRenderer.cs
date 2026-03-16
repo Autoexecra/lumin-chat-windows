@@ -7,26 +7,26 @@ namespace LuminChatWin.App;
 
 internal static class TerminalAnsiRenderer
 {
-    private static readonly Brush DefaultForeground = CreateBrush(0xDD, 0xEF, 0xE7);
-    private static readonly Brush DefaultBackground = Brushes.Transparent;
-    private static readonly Brush[] Palette =
+    private static readonly Color DefaultForeground = Color.FromRgb(0xDD, 0xEF, 0xE7);
+    private static readonly Color? DefaultBackground = null;
+    private static readonly Color[] Palette =
     [
-        CreateBrush(0x17, 0x20, 0x2A),
-        CreateBrush(0xE0, 0x6C, 0x75),
-        CreateBrush(0x98, 0xC3, 0x79),
-        CreateBrush(0xE5, 0xC0, 0x7B),
-        CreateBrush(0x61, 0xAF, 0xEF),
-        CreateBrush(0xC6, 0x78, 0xDD),
-        CreateBrush(0x56, 0xB6, 0xC2),
-        CreateBrush(0xAB, 0xB2, 0xBF),
-        CreateBrush(0x5C, 0x63, 0x70),
-        CreateBrush(0xFF, 0x7B, 0x72),
-        CreateBrush(0xB8, 0xE9, 0x86),
-        CreateBrush(0xFF, 0xD8, 0x66),
-        CreateBrush(0x82, 0xC4, 0xFF),
-        CreateBrush(0xE3, 0x9D, 0xFF),
-        CreateBrush(0x7F, 0xDB, 0xCA),
-        CreateBrush(0xFF, 0xFF, 0xFF),
+        Color.FromRgb(0x17, 0x20, 0x2A),
+        Color.FromRgb(0xE0, 0x6C, 0x75),
+        Color.FromRgb(0x98, 0xC3, 0x79),
+        Color.FromRgb(0xE5, 0xC0, 0x7B),
+        Color.FromRgb(0x61, 0xAF, 0xEF),
+        Color.FromRgb(0xC6, 0x78, 0xDD),
+        Color.FromRgb(0x56, 0xB6, 0xC2),
+        Color.FromRgb(0xAB, 0xB2, 0xBF),
+        Color.FromRgb(0x5C, 0x63, 0x70),
+        Color.FromRgb(0xFF, 0x7B, 0x72),
+        Color.FromRgb(0xB8, 0xE9, 0x86),
+        Color.FromRgb(0xFF, 0xD8, 0x66),
+        Color.FromRgb(0x82, 0xC4, 0xFF),
+        Color.FromRgb(0xE3, 0x9D, 0xFF),
+        Color.FromRgb(0x7F, 0xDB, 0xCA),
+        Color.FromRgb(0xFF, 0xFF, 0xFF),
     ];
 
     public static FlowDocument Render(string? text)
@@ -49,13 +49,15 @@ internal static class TerminalAnsiRenderer
         }
 
         var state = new RenderState();
-        var buffer = new StringBuilder();
+        var lines = new List<List<StyledCharacter>> { new() };
+        var currentLine = lines[0];
+        var cursorColumn = 0;
+
         for (var index = 0; index < text.Length; index++)
         {
             var current = text[index];
             if (current == '\u001b')
             {
-                Flush(paragraph, buffer, state);
                 if (TryReadCsi(text, ref index, out var sequence))
                 {
                     ApplyCsi(sequence, state);
@@ -68,10 +70,45 @@ internal static class TerminalAnsiRenderer
                 }
             }
 
-            buffer.Append(current);
+            switch (current)
+            {
+                case '\a':
+                    break;
+                case '\r':
+                    cursorColumn = 0;
+                    break;
+                case '\n':
+                    currentLine = new List<StyledCharacter>();
+                    lines.Add(currentLine);
+                    cursorColumn = 0;
+                    break;
+                case '\b':
+                    if (cursorColumn > 0)
+                    {
+                        cursorColumn--;
+                        if (cursorColumn < currentLine.Count)
+                        {
+                            currentLine.RemoveAt(cursorColumn);
+                        }
+                    }
+                    break;
+                default:
+                    var styledCharacter = new StyledCharacter(current, state.ToSpec());
+                    if (cursorColumn < currentLine.Count)
+                    {
+                        currentLine[cursorColumn] = styledCharacter;
+                    }
+                    else
+                    {
+                        currentLine.Add(styledCharacter);
+                    }
+
+                    cursorColumn++;
+                    break;
+            }
         }
 
-        Flush(paragraph, buffer, state);
+        WriteLines(paragraph, lines);
         return document;
     }
 
@@ -210,24 +247,51 @@ internal static class TerminalAnsiRenderer
         }
     }
 
-    private static void Flush(Paragraph paragraph, StringBuilder buffer, RenderState state)
+    private static void WriteLines(Paragraph paragraph, IReadOnlyList<List<StyledCharacter>> lines)
     {
-        if (buffer.Length == 0)
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
-            return;
-        }
+            var line = lines[lineIndex];
+            if (line.Count > 0)
+            {
+                var buffer = new StringBuilder();
+                var currentStyle = line[0].Style;
+                foreach (var item in line)
+                {
+                    if (!item.Style.Equals(currentStyle))
+                    {
+                        paragraph.Inlines.Add(CreateRun(buffer.ToString(), currentStyle));
+                        buffer.Clear();
+                        currentStyle = item.Style;
+                    }
 
-        var run = new Run(buffer.ToString())
-        {
-            Foreground = state.Foreground,
-            Background = state.Background,
-            FontWeight = state.Bold ? FontWeights.Bold : FontWeights.Normal,
-        };
-        paragraph.Inlines.Add(run);
-        buffer.Clear();
+                    buffer.Append(item.Character);
+                }
+
+                if (buffer.Length > 0)
+                {
+                    paragraph.Inlines.Add(CreateRun(buffer.ToString(), currentStyle));
+                }
+            }
+
+            if (lineIndex < lines.Count - 1)
+            {
+                paragraph.Inlines.Add(new LineBreak());
+            }
+        }
     }
 
-    private static Brush From256Color(int index)
+    private static Run CreateRun(string text, StyleSpec style)
+    {
+        return new Run(text)
+        {
+            Foreground = CreateBrush(style.Foreground),
+            Background = style.Background is Color background ? CreateBrush(background) : Brushes.Transparent,
+            FontWeight = style.Bold ? FontWeights.Bold : FontWeights.Normal,
+        };
+    }
+
+    private static Color From256Color(int index)
     {
         if (index < 0)
         {
@@ -245,24 +309,24 @@ internal static class TerminalAnsiRenderer
             var r = colorIndex / 36;
             var g = (colorIndex % 36) / 6;
             var b = colorIndex % 6;
-            return CreateBrush((byte)(r == 0 ? 0 : r * 40 + 55), (byte)(g == 0 ? 0 : g * 40 + 55), (byte)(b == 0 ? 0 : b * 40 + 55));
+            return Color.FromRgb((byte)(r == 0 ? 0 : r * 40 + 55), (byte)(g == 0 ? 0 : g * 40 + 55), (byte)(b == 0 ? 0 : b * 40 + 55));
         }
 
         var level = (byte)(8 + (index - 232) * 10);
-        return CreateBrush(level, level, level);
+        return Color.FromRgb(level, level, level);
     }
 
-    private static SolidColorBrush CreateBrush(byte r, byte g, byte b)
+    private static SolidColorBrush CreateBrush(Color color)
     {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
     }
 
     private sealed class RenderState
     {
-        public Brush Foreground { get; set; } = DefaultForeground;
-        public Brush Background { get; set; } = DefaultBackground;
+        public Color Foreground { get; set; } = DefaultForeground;
+        public Color? Background { get; set; } = DefaultBackground;
         public bool Bold { get; set; }
 
         public void Reset()
@@ -271,5 +335,11 @@ internal static class TerminalAnsiRenderer
             Background = DefaultBackground;
             Bold = false;
         }
+
+        public StyleSpec ToSpec() => new(Foreground, Background, Bold);
     }
+
+    private readonly record struct StyleSpec(Color Foreground, Color? Background, bool Bold);
+
+    private readonly record struct StyledCharacter(char Character, StyleSpec Style);
 }
