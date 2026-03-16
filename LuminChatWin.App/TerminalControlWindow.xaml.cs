@@ -4,9 +4,12 @@ using System.IO.Ports;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using LuminChatWin.Core.Models;
+using LuminChatWin.Core.Services;
 
 namespace LuminChatWin.App;
 
@@ -17,9 +20,11 @@ public partial class TerminalControlWindow : Window
     private readonly ObservableCollection<OpenTerminalSessionViewModel> _openSessions = [];
     private readonly ObservableCollection<AgentTimelineItemViewModel> _agentTimeline = [];
     private readonly List<TerminalAgentDialogueItem> _agentDialogue = [];
+    private readonly List<TerminalAgentDialogueItem> _promptDialogue = [];
     private readonly List<AgentModelOption> _agentModelOptions = [];
     private string? _loadedProfileId;
     private TerminalSessionKind? _loadedProfileKind;
+    private string? _promptObjective;
     private bool _agentBusy;
 
     public TerminalControlWindow(AppRuntime runtime)
@@ -38,7 +43,6 @@ public partial class TerminalControlWindow : Window
         ApiHostTextBox.Text = runtime.Config.Terminal.ExecApi.BindHost;
         ApiPortTextBox.Text = runtime.Config.Terminal.ExecApi.Port.ToString();
         ApiTimeoutTextBox.Text = runtime.Config.Terminal.ExecApi.DefaultTimeoutSeconds.ToString("0.##");
-        AgentAutoExecuteCheckBox.IsChecked = runtime.Config.Terminal.Agent.AutoExecute;
 
         _runtime.TerminalSessions.OutputReceived += TerminalSessions_OutputReceived;
         _runtime.ConfigChanged += Runtime_ConfigChanged;
@@ -50,9 +54,12 @@ public partial class TerminalControlWindow : Window
         RefreshModelChoices();
         RefreshAgentTargets();
         RefreshApiSummary();
+        RefreshBridgeTargets();
         ProfileHintTextBlock.Text = "串口会话开启 SSH 共享后会在打开时自动启动桥接，API 共享则决定是否暴露到本地 HTTP API。";
-        AgentStatusTextBlock.Text = "Ready";
-        AgentSummaryTextBlock.Text = "未开始执行。选择目标会话、模型和需求后发送给 Agent。";
+        AgentStatusTextBlock.Text = "自动模式待命";
+        AgentSummaryTextBlock.Text = "未开始执行。选择目标会话、模型和需求后，Agent 会持续执行直到完成。";
+        PromptStatusTextBlock.Text = "提示模式待命";
+        PromptSummaryTextBlock.Text = "未开始执行。提示模式只生成建议命令，手动执行后会继续规划。";
         SetWindowStatus("终端工作台已就绪。焦点进入终端正文后可直接输入。", isMuted: true);
     }
 
@@ -66,6 +73,7 @@ public partial class TerminalControlWindow : Window
             RefreshModelChoices();
             RefreshProfiles();
             RefreshSessionSummary();
+            RefreshBridgeTargets();
         });
     }
 
@@ -88,6 +96,7 @@ public partial class TerminalControlWindow : Window
             }
 
             viewModel.OutputText = _runtime.TerminalSessions.GetRecentOutput(e.SessionId);
+            viewModel.RawOutput = _runtime.TerminalSessions.GetRecentRawOutput(e.SessionId);
             viewModel.CurrentCommandText = BuildCurrentCommandText(e.SessionId);
             viewModel.MetaLine = BuildMetaLine(_runtime.TerminalSessions.GetSession(e.SessionId));
             RefreshSessionSummary();
@@ -101,6 +110,7 @@ public partial class TerminalControlWindow : Window
         RefreshAgentTargets();
         RefreshSerialPorts();
         RefreshApiSummary();
+        RefreshBridgeTargets();
         SetWindowStatus("已刷新会话、串口、Agent 目标与共享状态。", isMuted: true);
     }
 
@@ -317,16 +327,17 @@ public partial class TerminalControlWindow : Window
             AddAgentTimeline("user", request);
             _agentDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
             AgentRequestTextBox.Clear();
-            AgentStatusTextBlock.Text = "Agent 正在规划...";
+            AgentStatusTextBlock.Text = "自动模式执行中...";
             AgentSummaryTextBlock.Text = $"目标会话：{targetSessionId} | 模型：{GetSelectedModelKey()}";
-            SetWindowStatus("Agent 正在规划下一步命令。", isMuted: false);
+            SetWindowStatus("Agent 正在自动执行终端任务。", isMuted: false);
 
-            var plan = await _runtime.TerminalAgent.RunStepAsync(
+            var plan = await _runtime.TerminalAgent.RunLoopAsync(
                 targetSessionId,
                 request,
                 _agentDialogue,
                 GetSelectedModelKey(),
-                autoExecute: AgentAutoExecuteCheckBox.IsChecked == true);
+                TerminalAgentMode.Auto,
+                CreateAgentProgress());
 
             if (!plan.Success)
             {
@@ -340,28 +351,32 @@ public partial class TerminalControlWindow : Window
             if (!string.IsNullOrWhiteSpace(plan.Analysis))
             {
                 AddAgentTimeline("agent", plan.Analysis);
-                _agentDialogue.Add(new TerminalAgentDialogueItem { Role = "agent", Content = plan.Analysis });
             }
 
-            SuggestedCommandTextBox.Text = plan.SuggestedCommand;
-            if (!string.IsNullOrWhiteSpace(plan.SuggestedCommand))
+            if (plan.Completed)
             {
-                AddAgentTimeline("system", $"建议命令: {plan.SuggestedCommand}");
+                AgentStatusTextBlock.Text = "任务完成";
+                AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "Agent 判断任务已完成。" : plan.FinalMessage;
+                SetWindowStatus("Agent 已完成当前任务。", isMuted: false);
             }
-
-            if (plan.Executed && plan.ExecutionResult is not null)
+            else if (plan.NeedInput)
             {
-                AddAgentTimeline("system", $"已执行: {plan.ExecutionResult.Command}");
-                AgentStatusTextBlock.Text = "已自动执行建议命令";
-                AgentSummaryTextBlock.Text = $"已自动执行：{plan.ExecutionResult.Command}";
-                SetWindowStatus("Agent 已自动执行建议命令。", isMuted: false);
+                AgentStatusTextBlock.Text = "等待人工输入";
+                AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "Agent 需要更多信息。" : plan.FinalMessage;
+                SetWindowStatus("Agent 需要人工补充信息。", isMuted: false);
+            }
+            else if (plan.Executed && plan.ExecutionResult is not null)
+            {
+                AgentStatusTextBlock.Text = "自动流程已暂停";
+                AgentSummaryTextBlock.Text = $"最后执行：{plan.ExecutionResult.Command}";
+                SetWindowStatus("Agent 自动流程已暂停。", isMuted: false);
                 RefreshOpenSessions(targetSessionId);
             }
             else
             {
-                AgentStatusTextBlock.Text = AgentAutoExecuteCheckBox.IsChecked == true ? "本轮无需执行命令" : "已生成建议命令";
-                AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand) ? "本轮未生成可执行命令。" : $"待确认命令：{plan.SuggestedCommand}";
-                SetWindowStatus("Agent 已生成建议命令。", isMuted: true);
+                AgentStatusTextBlock.Text = "自动流程结束";
+                AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand) ? "本轮未生成可执行命令。" : $"最后建议命令：{plan.SuggestedCommand}";
+                SetWindowStatus("Agent 自动流程结束。", isMuted: true);
             }
         }
         catch (Exception ex)
@@ -376,28 +391,107 @@ public partial class TerminalControlWindow : Window
         }
     }
 
-    private async void ExecuteSuggestedCommand_Click(object sender, RoutedEventArgs e)
+    private async void SendPromptRequest_Click(object sender, RoutedEventArgs e)
     {
-        var targetSessionId = GetAgentTargetSessionId();
-        if (string.IsNullOrWhiteSpace(targetSessionId) || string.IsNullOrWhiteSpace(SuggestedCommandTextBox.Text))
+        if (_agentBusy)
+        {
+            return;
+        }
+
+        var request = PromptRequestTextBox.Text.Trim();
+        var targetSessionId = GetPromptTargetSessionId();
+        if (string.IsNullOrWhiteSpace(request))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetSessionId))
+        {
+            MessageBox.Show(this, "请先选择一个打开中的终端会话。", "提示模式", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            _agentBusy = true;
+            PersistAgentPreferences();
+            _promptObjective = request;
+            _promptDialogue.Clear();
+            _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
+            AddAgentTimeline("user", $"[提示模式] {request}");
+            PromptRequestTextBox.Clear();
+            PromptStatusTextBlock.Text = "提示模式规划中...";
+            PromptSummaryTextBlock.Text = $"目标会话：{targetSessionId} | 模型：{GetPromptModelKey()}";
+            SetWindowStatus("提示模式正在生成建议命令。", isMuted: false);
+
+            var plan = await _runtime.TerminalAgent.RunLoopAsync(
+                targetSessionId,
+                request,
+                _promptDialogue,
+                GetPromptModelKey(),
+                TerminalAgentMode.Prompt,
+                CreateAgentProgress());
+
+            ApplyPromptPlan(plan, targetSessionId);
+        }
+        catch (Exception ex)
+        {
+            PromptStatusTextBlock.Text = "提示模式失败";
+            PromptSummaryTextBlock.Text = ex.Message;
+            ShowError(ex);
+        }
+        finally
+        {
+            _agentBusy = false;
+        }
+    }
+
+    private async void ExecutePromptCommand_Click(object sender, RoutedEventArgs e)
+    {
+        if (_agentBusy)
+        {
+            return;
+        }
+
+        var targetSessionId = GetPromptTargetSessionId();
+        if (string.IsNullOrWhiteSpace(targetSessionId) || string.IsNullOrWhiteSpace(PromptSuggestedCommandTextBox.Text) || string.IsNullOrWhiteSpace(_promptObjective))
         {
             return;
         }
 
         try
         {
+            _agentBusy = true;
             var result = await _runtime.TerminalSessions.ExecuteCommandAsync(
                 targetSessionId,
-                SuggestedCommandTextBox.Text,
+                PromptSuggestedCommandTextBox.Text,
                 TimeSpan.FromSeconds(Math.Max(3, _runtime.Config.Terminal.ExecApi.DefaultTimeoutSeconds)));
-            AddAgentTimeline("system", $"手动执行: {result.Command}");
-            AgentSummaryTextBlock.Text = $"已手动执行建议命令：{result.Command}";
-            SetWindowStatus("已手动执行 Agent 建议命令。", isMuted: false);
+            AddAgentTimeline("system", $"[提示模式] 手动执行: {result.Command}");
+            _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "system", Content = BuildExecutionNote(result) });
+            PromptStatusTextBlock.Text = "已执行，继续规划中...";
+            PromptSummaryTextBlock.Text = $"已手动执行：{result.Command}";
+            SetWindowStatus("提示模式已执行建议命令，正在继续规划。", isMuted: false);
             RefreshOpenSessions(targetSessionId);
+
+            var plan = await _runtime.TerminalAgent.RunLoopAsync(
+                targetSessionId,
+                _promptObjective,
+                _promptDialogue,
+                GetPromptModelKey(),
+                TerminalAgentMode.Prompt,
+                CreateAgentProgress());
+
+            ApplyPromptPlan(plan, targetSessionId);
         }
         catch (Exception ex)
         {
+            PromptStatusTextBlock.Text = "提示模式失败";
+            PromptSummaryTextBlock.Text = ex.Message;
             ShowError(ex);
+        }
+        finally
+        {
+            _agentBusy = false;
         }
     }
 
@@ -408,7 +502,7 @@ public partial class TerminalControlWindow : Window
             var config = _runtime.ConfigService.LoadOrCreate();
             config.Terminal.DefaultPowershellProgram = PowerShellProgramTextBox.Text;
             config.Terminal.DefaultPowershellArgs = PowerShellArgsTextBox.Text;
-            config.Terminal.Agent.AutoExecute = AgentAutoExecuteCheckBox.IsChecked == true;
+            config.Terminal.Agent.AutoExecute = true;
             config.Terminal.Agent.SelectedModel = GetSelectedModelKey();
             config.Terminal.ExecApi.Enabled = ApiEnabledCheckBox.IsChecked == true;
             config.Terminal.ExecApi.BindHost = ApiHostTextBox.Text;
@@ -425,25 +519,76 @@ public partial class TerminalControlWindow : Window
         }
     }
 
+    private void SaveBridgeSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (BridgeSessionComboBox.SelectedItem is not SerialBridgeTargetItem target)
+        {
+            MessageBox.Show(this, "请先选择一个串口。", "串口 SSH Bridge", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var port = ParseInt(BridgePortTextBox.Text, 0);
+            if (port <= 0)
+            {
+                throw new InvalidOperationException("桥接端口必须是有效的正整数。");
+            }
+
+            var config = _runtime.ConfigService.LoadOrCreate();
+            config.Terminal.SerialSshBridge.PortOverrides[target.PortKey] = port;
+            _runtime.SaveConfig(config);
+            BridgeStatusTextBlock.Text = $"已保存 {target.Label} 的共享端口: {config.Terminal.SerialSshBridge.BindHost}:{port}";
+            SetWindowStatus($"已保存串口共享端口：{target.Label} -> {port}", isMuted: true);
+            RefreshBridgeTargets(target.PortKey);
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex);
+        }
+    }
+
     private async void OpenBridge_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(SelectedOpenSessionId))
+        if (BridgeSessionComboBox.SelectedItem is not SerialBridgeTargetItem target)
         {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(target.SessionId))
+        {
+            MessageBox.Show(this, "这个串口当前没有打开会话。请先打开对应串口会话，再手工打开共享端口。", "串口 SSH Bridge", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         try
         {
             var bridge = await _runtime.TerminalSessions.StartSerialBridgeAsync(
-                SelectedOpenSessionId,
+                target.SessionId,
                 string.IsNullOrWhiteSpace(BridgePortTextBox.Text) ? null : ParseInt(BridgePortTextBox.Text, 22000));
-            BridgeStatusTextBlock.Text = $"{bridge.Protocol}://{bridge.Host}:{bridge.Port}  {bridge.Message}";
-            SetWindowStatus($"已打开 Bridge：{bridge.Protocol}://{bridge.Host}:{bridge.Port}", isMuted: true);
+            BridgeStatusTextBlock.Text = $"{target.Label}: {bridge.Protocol}://{bridge.Host}:{bridge.Port}  {bridge.Message}";
+            SetWindowStatus($"已打开共享端口：{target.Label} -> {bridge.Host}:{bridge.Port}", isMuted: true);
         }
         catch (Exception ex)
         {
             ShowError(ex);
         }
+    }
+
+    private void BridgeSessionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (BridgeSessionComboBox.SelectedItem is not SerialBridgeTargetItem target)
+        {
+            return;
+        }
+
+        if (_runtime.Config.Terminal.SerialSshBridge.PortOverrides.TryGetValue(target.PortKey, out var savedPort))
+        {
+            BridgePortTextBox.Text = savedPort.ToString();
+            return;
+        }
+
+        BridgePortTextBox.Text = string.Empty;
     }
 
     private void OpenSessionsTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -459,19 +604,17 @@ public partial class TerminalControlWindow : Window
 
     private void TerminalViewport_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBox textBox)
+        if (sender is RichTextBox richTextBox)
         {
-            textBox.ScrollToEnd();
-            textBox.CaretIndex = textBox.Text.Length;
+            RefreshTerminalViewport(richTextBox);
         }
     }
 
-    private void TerminalViewport_TextChanged(object sender, TextChangedEventArgs e)
+    private void TerminalViewport_TargetUpdated(object sender, DataTransferEventArgs e)
     {
-        if (sender is TextBox textBox)
+        if (sender is RichTextBox richTextBox)
         {
-            textBox.ScrollToEnd();
-            textBox.CaretIndex = textBox.Text.Length;
+            RefreshTerminalViewport(richTextBox);
         }
     }
 
@@ -488,14 +631,14 @@ public partial class TerminalControlWindow : Window
 
     private async void TerminalViewport_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (!TryGetOpenSessionParameter(sender, out var session) || sender is not TextBox textBox)
+        if (!TryGetOpenSessionParameter(sender, out var session) || sender is not RichTextBox richTextBox)
         {
             return;
         }
 
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
         {
-            if (!string.IsNullOrEmpty(textBox.SelectedText))
+            if (!string.IsNullOrEmpty(richTextBox.Selection.Text))
             {
                 return;
             }
@@ -675,6 +818,7 @@ public partial class TerminalControlWindow : Window
             RefreshOpenSessions(session.SessionId);
             RefreshAgentTargets(session.SessionId);
             RefreshApiSummary();
+            RefreshBridgeTargets();
             SetWindowStatus($"已打开会话：{profile.Title}", isMuted: false);
         }
         catch (Exception ex)
@@ -708,6 +852,7 @@ public partial class TerminalControlWindow : Window
             _openSessions.Add(new OpenTerminalSessionViewModel(session)
             {
                 OutputText = _runtime.TerminalSessions.GetRecentOutput(session.SessionId),
+                RawOutput = _runtime.TerminalSessions.GetRecentRawOutput(session.SessionId),
                 CurrentCommandText = BuildCurrentCommandText(session.SessionId),
                 MetaLine = BuildMetaLine(session),
             });
@@ -724,21 +869,26 @@ public partial class TerminalControlWindow : Window
 
         EmptySessionsBorder.Visibility = _openSessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RefreshSessionSummary();
+        RefreshBridgeTargets();
     }
 
     private void RefreshAgentTargets(string? preferredSessionId = null)
     {
-        var selected = preferredSessionId ?? GetAgentTargetSessionId() ?? SelectedOpenSessionId;
-        AgentTargetSessionComboBox.ItemsSource = _openSessions
+        var items = _openSessions
             .Select(item => new AgentTargetSessionItem(item.SessionId, $"{item.KindLabel} | {item.Title}"))
             .ToList();
+        var selected = preferredSessionId ?? GetAgentTargetSessionId() ?? GetPromptTargetSessionId() ?? SelectedOpenSessionId;
+        AgentTargetSessionComboBox.ItemsSource = items;
+        PromptTargetSessionComboBox.ItemsSource = items;
         if (!string.IsNullOrWhiteSpace(selected))
         {
             AgentTargetSessionComboBox.SelectedValue = selected;
+            PromptTargetSessionComboBox.SelectedValue = selected;
         }
-        else if (AgentTargetSessionComboBox.Items.Count > 0)
+        else if (items.Count > 0)
         {
             AgentTargetSessionComboBox.SelectedIndex = 0;
+            PromptTargetSessionComboBox.SelectedIndex = 0;
         }
     }
 
@@ -762,6 +912,47 @@ public partial class TerminalControlWindow : Window
         RefreshSessionSummary();
     }
 
+    private void RefreshBridgeTargets(string? preferredPortKey = null)
+    {
+        var openSerials = _openSessions
+            .Where(item => item.Session.Kind == TerminalSessionKind.Serial)
+            .Select(item => new SerialBridgeTargetItem(
+                ResolveBridgePortKey(item.Descriptor),
+                $"{item.Title} | {item.Descriptor}",
+                item.SessionId))
+            .Where(item => !string.IsNullOrWhiteSpace(item.PortKey))
+            .ToList();
+
+        var configuredSerials = _runtime.TerminalProfiles.List()
+            .Where(item => item.Kind == TerminalSessionKind.Serial)
+            .Select(item =>
+            {
+                var portKey = item.PortName.Trim();
+                var openMatch = openSerials.FirstOrDefault(open => string.Equals(open.PortKey, portKey, StringComparison.OrdinalIgnoreCase));
+                return new SerialBridgeTargetItem(portKey, $"{item.Title} | {portKey}", openMatch?.SessionId);
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.PortKey))
+            .ToList();
+
+        var items = openSerials
+            .Concat(configuredSerials)
+            .GroupBy(item => item.PortKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(item => item.PortKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var selected = preferredPortKey ?? (BridgeSessionComboBox.SelectedItem as SerialBridgeTargetItem)?.PortKey;
+        BridgeSessionComboBox.ItemsSource = items;
+        if (!string.IsNullOrWhiteSpace(selected))
+        {
+            BridgeSessionComboBox.SelectedItem = items.FirstOrDefault(item => string.Equals(item.PortKey, selected, StringComparison.OrdinalIgnoreCase));
+        }
+        else if (items.Count > 0)
+        {
+            BridgeSessionComboBox.SelectedIndex = 0;
+        }
+    }
+
     private void RefreshModelChoices()
     {
         var selectedKey = GetSelectedModelKey();
@@ -777,14 +968,26 @@ public partial class TerminalControlWindow : Window
         AgentModelComboBox.ItemsSource = _agentModelOptions;
         AgentModelComboBox.DisplayMemberPath = nameof(AgentModelOption.Label);
         AgentModelComboBox.SelectedValuePath = nameof(AgentModelOption.Key);
+        PromptModelComboBox.ItemsSource = _agentModelOptions;
+        PromptModelComboBox.DisplayMemberPath = nameof(AgentModelOption.Label);
+        PromptModelComboBox.SelectedValuePath = nameof(AgentModelOption.Key);
         AgentModelComboBox.SelectedValue = _runtime.Config.Terminal.Agent.SelectedModel;
+        PromptModelComboBox.SelectedValue = _runtime.Config.Terminal.Agent.SelectedModel;
         if (AgentModelComboBox.SelectedValue is null)
         {
             AgentModelComboBox.SelectedValue = string.IsNullOrWhiteSpace(selectedKey) ? "auto" : selectedKey;
         }
+        if (PromptModelComboBox.SelectedValue is null)
+        {
+            PromptModelComboBox.SelectedValue = AgentModelComboBox.SelectedValue;
+        }
         if (AgentModelComboBox.SelectedValue is null)
         {
             AgentModelComboBox.SelectedIndex = 0;
+        }
+        if (PromptModelComboBox.SelectedValue is null)
+        {
+            PromptModelComboBox.SelectedIndex = 0;
         }
     }
 
@@ -804,7 +1007,7 @@ public partial class TerminalControlWindow : Window
     private void PersistAgentPreferences()
     {
         var config = _runtime.ConfigService.LoadOrCreate();
-        config.Terminal.Agent.AutoExecute = AgentAutoExecuteCheckBox.IsChecked == true;
+        config.Terminal.Agent.AutoExecute = true;
         config.Terminal.Agent.SelectedModel = GetSelectedModelKey();
         _runtime.SaveConfig(config);
     }
@@ -814,9 +1017,19 @@ public partial class TerminalControlWindow : Window
         return AgentModelComboBox.SelectedValue as string ?? _runtime.Config.Terminal.Agent.SelectedModel ?? "auto";
     }
 
+    private string GetPromptModelKey()
+    {
+        return PromptModelComboBox.SelectedValue as string ?? GetSelectedModelKey();
+    }
+
     private string? GetAgentTargetSessionId()
     {
         return AgentTargetSessionComboBox.SelectedValue as string ?? SelectedOpenSessionId;
+    }
+
+    private string? GetPromptTargetSessionId()
+    {
+        return PromptTargetSessionComboBox.SelectedValue as string ?? SelectedOpenSessionId;
     }
 
     private void AddAgentTimeline(string role, string content)
@@ -828,6 +1041,92 @@ public partial class TerminalControlWindow : Window
         }
         AgentTimelineListBox.ScrollIntoView(_agentTimeline.LastOrDefault());
         AgentSummaryTextBlock.Text = $"最近事件: {content}";
+    }
+
+    private void ApplyPromptPlan(TerminalAgentPlan plan, string sessionId)
+    {
+        if (!plan.Success)
+        {
+            AddAgentTimeline("agent", $"[提示模式] 规划失败: {plan.Error}");
+            PromptStatusTextBlock.Text = "规划失败";
+            PromptSummaryTextBlock.Text = plan.Error;
+            SetWindowStatus("提示模式规划失败。", isMuted: false);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.Analysis))
+        {
+            AddAgentTimeline("agent", $"[提示模式] {plan.Analysis}");
+        }
+
+        PromptSuggestedCommandTextBox.Text = plan.SuggestedCommand;
+        if (plan.Completed)
+        {
+            PromptStatusTextBlock.Text = "任务完成";
+            PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "提示模式判断任务已完成。" : plan.FinalMessage;
+            SetWindowStatus("提示模式任务已完成。", isMuted: false);
+            return;
+        }
+
+        if (plan.NeedInput)
+        {
+            PromptStatusTextBlock.Text = "等待人工输入";
+            PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "提示模式需要更多信息。" : plan.FinalMessage;
+            SetWindowStatus("提示模式需要人工补充信息。", isMuted: false);
+            return;
+        }
+
+        PromptStatusTextBlock.Text = "等待手动执行";
+        PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand)
+            ? $"会话 {sessionId} 当前没有可执行命令。"
+            : $"建议命令：{plan.SuggestedCommand}";
+        if (!string.IsNullOrWhiteSpace(plan.SuggestedCommand))
+        {
+            AddAgentTimeline("system", $"[提示模式] 建议命令: {plan.SuggestedCommand}");
+        }
+        SetWindowStatus("提示模式已生成建议命令。", isMuted: true);
+    }
+
+    private IProgress<AgentEvent> CreateAgentProgress()
+    {
+        return new Progress<AgentEvent>(agentEvent =>
+        {
+            if (agentEvent is null)
+            {
+                return;
+            }
+
+            var role = agentEvent.Type switch
+            {
+                AgentEventType.Reasoning or AgentEventType.Content => "agent",
+                AgentEventType.ToolCall or AgentEventType.ToolResult or AgentEventType.Info => "system",
+                AgentEventType.Warning or AgentEventType.Error => "system",
+                _ => "system",
+            };
+
+            var content = agentEvent.Type switch
+            {
+                AgentEventType.ToolCall => $"工具调用 {agentEvent.ToolName}: {agentEvent.Message}",
+                AgentEventType.ToolResult => $"工具结果 {agentEvent.ToolName}: {agentEvent.Message}",
+                _ => agentEvent.Message,
+            };
+
+            AddAgentTimeline(role, content);
+        });
+    }
+
+    private void RefreshTerminalViewport(RichTextBox richTextBox)
+    {
+        var rawText = richTextBox.Tag as string ?? string.Empty;
+        richTextBox.Document = TerminalAnsiRenderer.BuildDocument(rawText);
+        richTextBox.CaretPosition = richTextBox.Document.ContentEnd;
+        richTextBox.ScrollToEnd();
+    }
+
+    private static string BuildExecutionNote(TerminalCommandResult result)
+    {
+        var output = string.IsNullOrWhiteSpace(result.Output) ? "<empty>" : result.Output;
+        return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
     }
 
     private void LoadProfileIntoForms(TerminalSessionProfile profile)
@@ -1011,6 +1310,16 @@ public partial class TerminalControlWindow : Window
         };
     }
 
+    private static string ResolveBridgePortKey(string descriptor)
+    {
+        if (string.IsNullOrWhiteSpace(descriptor))
+        {
+            return string.Empty;
+        }
+
+        return descriptor.Split('@', 2, StringSplitOptions.TrimEntries)[0].Trim();
+    }
+
     private void SetWindowStatus(string message, bool isMuted)
     {
         WindowStatusTextBlock.Text = message;
@@ -1045,6 +1354,7 @@ public partial class TerminalControlWindow : Window
     private sealed class OpenTerminalSessionViewModel : INotifyPropertyChanged
     {
         private string _outputText = string.Empty;
+        private string _rawOutput = string.Empty;
         private string _currentCommandText = string.Empty;
         private string _metaLine = string.Empty;
 
@@ -1068,6 +1378,12 @@ public partial class TerminalControlWindow : Window
         {
             get => _outputText;
             set => SetField(ref _outputText, value);
+        }
+
+        public string RawOutput
+        {
+            get => _rawOutput;
+            set => SetField(ref _rawOutput, value);
         }
 
         public string CurrentCommandText
@@ -1117,4 +1433,5 @@ public partial class TerminalControlWindow : Window
 
     private sealed record AgentModelOption(string Key, string Label);
     private sealed record AgentTargetSessionItem(string SessionId, string Label);
+    private sealed record SerialBridgeTargetItem(string PortKey, string Label, string? SessionId);
 }

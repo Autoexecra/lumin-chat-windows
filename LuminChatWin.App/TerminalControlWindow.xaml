@@ -176,13 +176,12 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
 
                             <StackPanel>
                                 <TextBlock Text="Agent 控制台" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="这里负责模型选择、目标会话、需求输入和建议命令执行。实时过程单独放到“AI过程”标签。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="自动模式会持续执行，直到模型判断任务完成或明确需要人工输入。实时过程单独放到“AI过程”标签。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,12">
@@ -198,7 +197,6 @@
                                         <ComboBox x:Name="AgentTargetSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="SessionId"/>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                        <CheckBox x:Name="AgentAutoExecuteCheckBox" Content="Agent 直接执行建议命令" Margin="0,0,0,10"/>
                                         <Button Content="刷新目标会话" Click="RefreshAgentTargets_Click"/>
                                         <TextBlock x:Name="AgentStatusTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                     </StackPanel>
@@ -210,14 +208,7 @@
                                     <StackPanel>
                                         <TextBlock Text="发送需求" FontWeight="SemiBold"/>
                                         <TextBox x:Name="AgentRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
-                                        <Button Content="发送给 Agent" Click="SendAgentRequest_Click"/>
-                                    </StackPanel>
-                                </Border>
-                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
-                                    <StackPanel>
-                                        <TextBlock Text="建议指令" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="SuggestedCommandTextBox" AcceptsReturn="True" Height="88" TextWrapping="Wrap" Margin="0,10,0,10"/>
-                                        <Button Content="执行建议指令" Style="{StaticResource SubtleButtonStyle}" Click="ExecuteSuggestedCommand_Click"/>
+                                        <Button Content="开始自动执行" Click="SendAgentRequest_Click"/>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -226,6 +217,65 @@
                                 <StackPanel>
                                     <TextBlock Text="当前状态" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="AgentSummaryTextBlock" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="提示模式">
+                        <Grid Margin="10,0,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel>
+                                <TextBlock Text="提示模式" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="这里只给出建议命令，不会自动执行。你手动执行后，会立刻基于最新会话窗口内容继续规划下一步。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,8,0">
+                                        <TextBlock Text="模型" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="PromptModelComboBox"/>
+                                        <TextBlock Text="目标会话" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                                        <ComboBox x:Name="PromptTargetSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="SessionId"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                        <Button Content="刷新目标会话" Click="RefreshAgentTargets_Click"/>
+                                        <TextBlock x:Name="PromptStatusTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <StackPanel Grid.Row="2">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="发送需求" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="PromptRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
+                                        <Button Content="生成建议" Click="SendPromptRequest_Click"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
+                                    <StackPanel>
+                                        <TextBlock Text="建议指令" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="PromptSuggestedCommandTextBox" AcceptsReturn="True" Height="88" TextWrapping="Wrap" Margin="0,10,0,10"/>
+                                        <Button Content="执行建议指令" Style="{StaticResource SubtleButtonStyle}" Click="ExecutePromptCommand_Click"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
+                                <StackPanel>
+                                    <TextBlock Text="当前状态" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="PromptSummaryTextBlock" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
                                 </StackPanel>
                             </Border>
                         </Grid>
@@ -280,11 +330,12 @@
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16">
                                     <StackPanel>
                                         <TextBlock Text="串口 SSH Bridge" FontSize="18" FontWeight="SemiBold"/>
-                                        <TextBlock Text="选中一个已打开串口标签后，可以手工打开桥接端口；如果该配置会话启用了 SSH 共享，打开会话时会自动启动。" Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
-                                        <TextBox x:Name="BridgePortTextBox" Text=""/>
+                                        <TextBlock Text="这里只保留串口选择、端口保存和手工打开。保存后，开启了 SSH 共享的串口会话在下次打开时会自动套用该端口。" Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <ComboBox x:Name="BridgeSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="PortKey" SelectionChanged="BridgeSessionComboBox_SelectionChanged"/>
+                                        <TextBox x:Name="BridgePortTextBox" Text="" Margin="0,8,0,0"/>
                                         <StackPanel Orientation="Horizontal">
-                                            <Button Content="为当前会话打开 Bridge" Click="OpenBridge_Click"/>
-                                            <Button Content="关闭当前会话" Style="{StaticResource SubtleButtonStyle}" Click="CloseCurrentSession_Click"/>
+                                            <Button Content="保存设置" Click="SaveBridgeSettings_Click"/>
+                                            <Button Content="立即打开共享端口" Style="{StaticResource SubtleButtonStyle}" Click="OpenBridge_Click"/>
                                         </StackPanel>
                                         <TextBlock x:Name="BridgeStatusTextBlock" Margin="0,10,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
@@ -333,23 +384,22 @@
                             <TabControl.ContentTemplate>
                                 <DataTemplate>
                                     <Border Background="#FF0E141C" CornerRadius="20" Margin="0,6,0,0" Padding="0" BorderBrush="#FF1C3446" BorderThickness="1">
-                                        <TextBox Text="{Binding OutputText, Mode=OneWay}"
-                                                 Loaded="TerminalViewport_Loaded"
-                                                 TextChanged="TerminalViewport_TextChanged"
-                                                 PreviewTextInput="TerminalViewport_PreviewTextInput"
-                                                 PreviewKeyDown="TerminalViewport_PreviewKeyDown"
-                                                 FontFamily="Consolas"
-                                                 FontSize="13"
-                                                 Foreground="#FFDDEFE7"
-                                                 CaretBrush="#FFF5FBFF"
-                                                 Background="Transparent"
-                                                 BorderThickness="0"
-                                                 AcceptsReturn="True"
-                                                 IsReadOnly="True"
-                                                 TextWrapping="NoWrap"
-                                                 VerticalScrollBarVisibility="Auto"
-                                                 HorizontalScrollBarVisibility="Auto"
-                                                 Padding="14,14,14,14"/>
+                                        <RichTextBox Tag="{Binding RawOutput, Mode=OneWay, NotifyOnTargetUpdated=True}"
+                                                     Loaded="TerminalViewport_Loaded"
+                                                     TargetUpdated="TerminalViewport_TargetUpdated"
+                                                     PreviewTextInput="TerminalViewport_PreviewTextInput"
+                                                     PreviewKeyDown="TerminalViewport_PreviewKeyDown"
+                                                     FontFamily="Consolas"
+                                                     FontSize="13"
+                                                     Foreground="#FFDDEFE7"
+                                                     CaretBrush="#FFF5FBFF"
+                                                     Background="Transparent"
+                                                     BorderThickness="0"
+                                                     IsReadOnly="True"
+                                                     IsUndoEnabled="False"
+                                                     VerticalScrollBarVisibility="Auto"
+                                                     HorizontalScrollBarVisibility="Auto"
+                                                     Padding="14,14,14,14"/>
                                     </Border>
                                 </DataTemplate>
                             </TabControl.ContentTemplate>

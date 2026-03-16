@@ -131,10 +131,38 @@ public sealed class OpenAiCompatibleChatClient : IChatCompletionClient
     {
         using var document = JsonDocument.Parse(body);
         var root = document.RootElement;
-        var choices = root.TryGetProperty("choices", out var choiceElement) ? choiceElement : default;
-        if (choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
+        if (TryParseChoicesResponse(root, out var response))
         {
-            return new LlmResponse { Success = false, Error = "LLM 返回结构缺少 choices。" };
+            return response;
+        }
+
+        if (TryParseDirectMessageResponse(root, out response))
+        {
+            return response;
+        }
+
+        if (root.TryGetProperty("error", out var errorElement))
+        {
+            return new LlmResponse
+            {
+                Success = false,
+                Error = $"LLM 返回错误: {ReadMessageContent(errorElement)}",
+            };
+        }
+
+        return new LlmResponse
+        {
+            Success = false,
+            Error = $"LLM 返回结构无法识别，缺少 choices/message。响应片段: {BuildPreview(body)}",
+        };
+    }
+
+    internal static bool TryParseChoicesResponse(JsonElement root, out LlmResponse response)
+    {
+        if (!TryReadChoices(root, out var choices) || choices.GetArrayLength() == 0)
+        {
+            response = new LlmResponse();
+            return false;
         }
 
         var firstChoice = choices[0];
@@ -144,7 +172,7 @@ public sealed class OpenAiCompatibleChatClient : IChatCompletionClient
         var toolCalls = ParseToolCalls(message);
         var extraReasoning = SplitThinking(rawContent, out var cleanContent);
 
-        return new LlmResponse
+        response = new LlmResponse
         {
             Success = true,
             Content = cleanContent,
@@ -153,6 +181,64 @@ public sealed class OpenAiCompatibleChatClient : IChatCompletionClient
             FinishReason = firstChoice.TryGetProperty("finish_reason", out var finishElement) ? finishElement.GetString() ?? string.Empty : string.Empty,
             Usage = ParseUsage(root),
         };
+        return true;
+    }
+
+    internal static bool TryParseDirectMessageResponse(JsonElement root, out LlmResponse response)
+    {
+        JsonElement message;
+        if (root.TryGetProperty("message", out var directMessage))
+        {
+            message = directMessage;
+        }
+        else if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Object && dataElement.TryGetProperty("message", out var nestedMessage))
+        {
+            message = nestedMessage;
+        }
+        else
+        {
+            response = new LlmResponse();
+            return false;
+        }
+
+        var rawContent = ReadMessageContent(message);
+        var reasoning = message.TryGetProperty("reasoning_content", out var reasoningElement) ? ReadMessageContent(reasoningElement) : string.Empty;
+        var extraReasoning = SplitThinking(rawContent, out var cleanContent);
+
+        response = new LlmResponse
+        {
+            Success = !string.IsNullOrWhiteSpace(cleanContent) || !string.IsNullOrWhiteSpace(reasoning),
+            Content = cleanContent,
+            ReasoningContent = string.Concat(reasoning, extraReasoning),
+            ToolCalls = ParseToolCalls(message),
+            Usage = ParseUsage(root),
+            Error = string.IsNullOrWhiteSpace(cleanContent) && string.IsNullOrWhiteSpace(reasoning)
+                ? "LLM 返回了 message，但未包含可读内容。"
+                : string.Empty,
+        };
+        return true;
+    }
+
+    private static bool TryReadChoices(JsonElement root, out JsonElement choices)
+    {
+        if (root.TryGetProperty("choices", out choices) && choices.ValueKind == JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Object && dataElement.TryGetProperty("choices", out choices) && choices.ValueKind == JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        choices = default;
+        return false;
+    }
+
+    private static string BuildPreview(string body)
+    {
+        var compact = body.Replace("\r", " ", StringComparison.Ordinal).Replace("\n", " ", StringComparison.Ordinal).Trim();
+        return compact.Length <= 180 ? compact : compact[..180] + "...";
     }
 
     private static string ReadMessageContent(JsonElement element)
@@ -162,6 +248,8 @@ public sealed class OpenAiCompatibleChatClient : IChatCompletionClient
             JsonValueKind.String => element.GetString() ?? string.Empty,
             JsonValueKind.Array => string.Concat(element.EnumerateArray().Select(ReadContentPart)),
             JsonValueKind.Object when element.TryGetProperty("content", out var nested) => ReadMessageContent(nested),
+            JsonValueKind.Object when element.TryGetProperty("message", out var message) => ReadMessageContent(message),
+            JsonValueKind.Object when element.TryGetProperty("text", out var text) => ReadMessageContent(text),
             _ => string.Empty,
         };
     }

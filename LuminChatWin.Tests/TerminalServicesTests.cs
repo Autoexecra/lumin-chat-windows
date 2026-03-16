@@ -35,6 +35,15 @@ public sealed class TerminalServicesTests
         Assert.Equal(expectedPort, port);
     }
 
+    [Theory]
+    [InlineData("COM12 @ 115200", "COM12")]
+    [InlineData("ttyUSB7 @ 921600", "ttyUSB7")]
+    [InlineData(" COM3   @ 9600 ", "COM3")]
+    public void TerminalSessionManager_ResolveBridgeOverrideKey_UsesStableSerialKey(string descriptor, string expectedKey)
+    {
+        Assert.Equal(expectedKey, TerminalSessionManager.ResolveBridgeOverrideKey(descriptor));
+    }
+
     [Fact]
     public async Task TerminalSessionManager_ExecutesPowerShellCommand()
     {

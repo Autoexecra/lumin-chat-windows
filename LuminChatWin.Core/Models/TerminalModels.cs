@@ -206,12 +206,21 @@ public sealed class TerminalAgentDialogueItem
     public string Timestamp { get; init; } = DateTime.UtcNow.ToString("O");
 }
 
+public enum TerminalAgentMode
+{
+    Auto,
+    Prompt,
+}
+
 public sealed class TerminalAgentPlan
 {
     public bool Success { get; init; }
     public bool Executed { get; init; }
+    public bool Completed { get; init; }
+    public bool NeedInput { get; init; }
     public string Analysis { get; init; } = string.Empty;
     public string SuggestedCommand { get; init; } = string.Empty;
+    public string FinalMessage { get; init; } = string.Empty;
     public string RawResponse { get; init; } = string.Empty;
     public string Error { get; init; } = string.Empty;
     public TerminalCommandResult? ExecutionResult { get; init; }

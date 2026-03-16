@@ -83,6 +83,21 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
+    public string GetRecentRawOutput(string sessionId, int maxChars = 16000)
+    {
+        var session = GetRequiredSession(sessionId);
+        lock (session.SyncRoot)
+        {
+            var text = session.RawOutput.ToString();
+            if (text.Length <= maxChars)
+            {
+                return text;
+            }
+
+            return text[^maxChars..];
+        }
+    }
+
     public ActiveTerminalCommandSnapshot GetCurrentCommandOutput(string sessionId)
     {
         var session = GetRequiredSession(sessionId);
@@ -250,8 +265,13 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
         var config = Config;
         var host = config.SerialSshBridge.BindHost;
+        if (!IPAddress.TryParse(host, out var bindAddress))
+        {
+            throw new InvalidOperationException($"Invalid serial bridge host: {host}");
+        }
+
         var port = requestedPort ?? ResolveBridgePort(session.Info);
-        var listener = new TcpListener(IPAddress.Parse(host), port);
+        var listener = new TcpListener(bindAddress, port);
         listener.Start();
 
         var bridgeState = new SerialBridgeState(listener, sessionId, host, port, session);
@@ -262,7 +282,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
 
         bridgeState.AcceptLoopTask = Task.Run(() => AcceptBridgeLoopAsync(bridgeState, cancellationToken), cancellationToken);
-        AppendHistory(session, TerminalHistoryEntryKind.System, $"Serial bridge listening on {host}:{port}");
+        AppendHistory(session, TerminalHistoryEntryKind.System, $"Serial bridge listening on {host}:{port} (raw TCP relay)");
         return bridgeState.Info;
     }
 
@@ -317,6 +337,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         {
             if (kind is TerminalHistoryEntryKind.Output or TerminalHistoryEntryKind.Error)
             {
+                session.RawOutput.Append(text);
                 ApplyTerminalChunk(session, text);
                 TrimRecentOutput(session);
             }
@@ -374,6 +395,12 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             session.CurrentLineStartIndex = Math.Max(0, session.CurrentLineStartIndex - overflow);
             var lastNewline = session.RenderedOutput.ToString().LastIndexOf('\n');
             session.CurrentLineStartIndex = lastNewline >= 0 ? lastNewline + 1 : 0;
+        }
+
+        var rawOverflow = session.RawOutput.Length - maxChars * 2;
+        if (rawOverflow > 0)
+        {
+            session.RawOutput.Remove(0, rawOverflow);
         }
     }
 
@@ -501,7 +528,23 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return explicitPort;
         }
 
+        var descriptorKey = ResolveBridgeOverrideKey(info.Descriptor);
+        if (!string.IsNullOrWhiteSpace(descriptorKey) && config.SerialSshBridge.PortOverrides.TryGetValue(descriptorKey, out explicitPort))
+        {
+            return explicitPort;
+        }
+
         return BuildDefaultBridgePort(config.SerialSshBridge.PortPrefix, info.Descriptor, info.SessionId);
+    }
+
+    internal static string ResolveBridgeOverrideKey(string descriptor)
+    {
+        if (string.IsNullOrWhiteSpace(descriptor))
+        {
+            return string.Empty;
+        }
+
+        return descriptor.Split('@', 2, StringSplitOptions.TrimEntries)[0].Trim();
     }
 
     internal static int BuildDefaultBridgePort(string portPrefix, string descriptor, string sessionId)
@@ -647,6 +690,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         public ITerminalBackend Backend { get; }
         public List<TerminalHistoryEntry> History { get; } = [];
         public StringBuilder RenderedOutput { get; } = new();
+        public StringBuilder RawOutput { get; } = new();
         public SemaphoreSlim CommandLock { get; } = new(1, 1);
         public StringBuilder? ActiveCommandBuffer { get; set; }
         public string ActiveCommandText { get; set; } = string.Empty;
@@ -669,7 +713,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
                 Host = host,
                 Port = port,
                 Protocol = "tcp-raw",
-                Message = "Raw TCP relay preview for serial sessions.",
+                Message = "Raw TCP relay for serial sessions. SSH clients are not supported by this relay.",
             };
         }
 

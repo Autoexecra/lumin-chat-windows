@@ -17,7 +17,7 @@ public sealed class AppRuntime : IAsyncDisposable
         Directory.CreateDirectory(WorkspaceRoot);
         TerminalSessions = new TerminalSessionManager(() => Config.Terminal);
         TerminalApiServer = new TerminalApiServer(TerminalSessions, () => Config.Terminal);
-        TerminalAgent = new TerminalAgentService(_chatClient, () => Config, TerminalSessions);
+        TerminalAgent = new TerminalAgentService(_chatClient, () => Config, TerminalSessions, () => WorkspaceRoot);
         TerminalProfiles = new TerminalProfileStore(() => ConfigService.ExpandPath(Config.Terminal.ProfileStorePath));
         EnsurePromptLibrary();
         _ = EnsureTerminalApiStateAsync();

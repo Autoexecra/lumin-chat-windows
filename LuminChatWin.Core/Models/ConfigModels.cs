@@ -228,7 +228,7 @@ public sealed class TerminalSerialBridgeConfig
     public bool Enabled { get; set; }
 
     [JsonPropertyName("bind_host")]
-    public string BindHost { get; set; } = "127.0.0.1";
+    public string BindHost { get; set; } = "0.0.0.0";
 
     [JsonPropertyName("port_prefix")]
     public string PortPrefix { get; set; } = "22";

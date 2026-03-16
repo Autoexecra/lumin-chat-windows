@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using LuminChatWin.Core.Models;
+using LuminChatWin.Core.Services;
 
 namespace LuminChatWin.App;
 
@@ -76,6 +77,23 @@ public partial class LlmConfigWindow : Window
         var thinkingCheckBox = new CheckBox { Content = "启用 thinking", IsChecked = model.EnableThinking, Margin = new Thickness(0, 6, 0, 8) };
         map["enable_thinking"] = thinkingCheckBox;
         panel.Children.Add(thinkingCheckBox);
+        panel.Children.Add(new Separator { Margin = new Thickness(0, 12, 0, 12) });
+        panel.Children.Add(new TextBlock { Text = "测试配置", FontSize = 18, FontWeight = FontWeights.SemiBold });
+        panel.Children.Add(new TextBlock { Text = "可以直接测试当前页参数，不需要先保存。", Margin = new Thickness(0, 8, 0, 10), TextWrapping = TextWrapping.Wrap });
+        AddTextBox(panel, map, "test_prompt", "测试输入", "请只回复 TEST_OK");
+        var testButton = new Button { Content = "测试当前配置", Margin = new Thickness(0, 10, 0, 10), Tag = key };
+        testButton.Click += TestModel_Click;
+        panel.Children.Add(testButton);
+        var resultBox = new TextBox
+        {
+            Height = 130,
+            AcceptsReturn = true,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        map["test_result"] = resultBox;
+        panel.Children.Add(resultBox);
     }
 
     private static void AddTextBox(Panel panel, Dictionary<string, Control> map, string key, string label, string value)
@@ -141,15 +159,7 @@ public partial class LlmConfigWindow : Window
             {
                 continue;
             }
-            model.Name = ((TextBox)controls["name"]).Text.Trim();
-            model.Provider = ((TextBox)controls["provider"]).Text.Trim();
-            model.Model = ((TextBox)controls["model"]).Text.Trim();
-            model.BaseUrl = ((TextBox)controls["base_url"]).Text.Trim();
-            model.ApiKeyEnv = ((TextBox)controls["api_key_env"]).Text.Trim();
-            model.ApiKey = ((TextBox)controls["api_key"]).Text.Trim();
-            model.Temperature = double.TryParse(((TextBox)controls["temperature"]).Text.Trim(), out var temperature) ? temperature : model.Temperature;
-            model.MaxTokens = int.TryParse(((TextBox)controls["max_tokens"]).Text.Trim(), out var maxTokens) ? maxTokens : model.MaxTokens;
-            model.EnableThinking = ((CheckBox)controls["enable_thinking"]).IsChecked == true;
+            ApplyControlsToModel(model, controls);
         }
 
         _runtime.SaveConfig(_draft);
@@ -159,6 +169,64 @@ public partial class LlmConfigWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    private async void TestModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string levelKey } || !_controls.TryGetValue(levelKey, out var controls))
+        {
+            return;
+        }
+
+        var resultBox = (TextBox)controls["test_result"];
+        resultBox.Text = "测试中...";
+
+        try
+        {
+            var config = _runtime.ConfigService.LoadOrCreate();
+            if (!config.Ai.TryGetValue(levelKey, out var model))
+            {
+                model = new AiModelConfig();
+                config.Ai[levelKey] = model;
+            }
+
+            ApplyControlsToModel(model, controls);
+            if (string.IsNullOrWhiteSpace(model.ApiKey) && !string.IsNullOrWhiteSpace(model.ApiKeyEnv))
+            {
+                model.ApiKey = Environment.GetEnvironmentVariable(model.ApiKeyEnv) ?? string.Empty;
+            }
+
+            var prompt = ((TextBox)controls["test_prompt"]).Text.Trim();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var client = new OpenAiCompatibleChatClient();
+            var response = await client.CompleteAsync(
+                config,
+                ParseLevel(levelKey),
+                [new PersistedChatMessage { Role = "user", Content = string.IsNullOrWhiteSpace(prompt) ? "请只回复 TEST_OK" : prompt }],
+                null,
+                cts.Token);
+
+            resultBox.Text = response.Success
+                ? $"测试成功\r\n\r\n内容:\r\n{response.Content}\r\n\r\n思考:\r\n{response.ReasoningContent}"
+                : $"测试失败\r\n\r\n{response.Error}";
+        }
+        catch (Exception ex)
+        {
+            resultBox.Text = $"测试失败\r\n\r\n{ex.Message}";
+        }
+    }
+
+    private static void ApplyControlsToModel(AiModelConfig model, Dictionary<string, Control> controls)
+    {
+        model.Name = ((TextBox)controls["name"]).Text.Trim();
+        model.Provider = ((TextBox)controls["provider"]).Text.Trim();
+        model.Model = ((TextBox)controls["model"]).Text.Trim();
+        model.BaseUrl = ((TextBox)controls["base_url"]).Text.Trim();
+        model.ApiKeyEnv = ((TextBox)controls["api_key_env"]).Text.Trim();
+        model.ApiKey = ((TextBox)controls["api_key"]).Text.Trim();
+        model.Temperature = double.TryParse(((TextBox)controls["temperature"]).Text.Trim(), out var temperature) ? temperature : model.Temperature;
+        model.MaxTokens = int.TryParse(((TextBox)controls["max_tokens"]).Text.Trim(), out var maxTokens) ? maxTokens : model.MaxTokens;
+        model.EnableThinking = ((CheckBox)controls["enable_thinking"]).IsChecked == true;
     }
 
     private static int ParseLevel(string key)

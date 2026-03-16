@@ -1,5 +1,6 @@
 using LuminChatWin.Core.Models;
 using LuminChatWin.Core.Services;
+using System.Text.Json;
 
 namespace LuminChatWin.Tests;
 
@@ -35,6 +36,51 @@ public sealed class ChatAgentTests
         Assert.Single(result.ToolRecords);
         Assert.Equal("get_environment", result.ToolRecords[0].Name);
     }
+
+        [Fact]
+        public void OpenAiCompatibleChatClient_ParseChoicesResponse_SupportsNestedDataChoices()
+        {
+                using var document = JsonDocument.Parse("""
+                {
+                    "data": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "TEST_OK"
+                                },
+                                "finish_reason": "stop"
+                            }
+                        ]
+                    }
+                }
+                """);
+
+                var ok = OpenAiCompatibleChatClient.TryParseChoicesResponse(document.RootElement, out var response);
+
+                Assert.True(ok);
+                Assert.True(response.Success);
+                Assert.Equal("TEST_OK", response.Content);
+        }
+
+        [Fact]
+        public void OpenAiCompatibleChatClient_ParseDirectMessageResponse_SupportsMessageOnlyPayload()
+        {
+                using var document = JsonDocument.Parse("""
+                {
+                    "message": {
+                        "content": [
+                            { "text": "hello" }
+                        ]
+                    }
+                }
+                """);
+
+                var ok = OpenAiCompatibleChatClient.TryParseDirectMessageResponse(document.RootElement, out var response);
+
+                Assert.True(ok);
+                Assert.True(response.Success);
+                Assert.Equal("hello", response.Content);
+        }
 
     private static string CreateTempDirectory()
     {
