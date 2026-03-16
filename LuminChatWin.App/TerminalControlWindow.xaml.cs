@@ -4,8 +4,6 @@ using System.IO.Ports;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using LuminChatWin.Core.Models;
@@ -604,17 +602,10 @@ public partial class TerminalControlWindow : Window
 
     private void TerminalViewport_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is RichTextBox richTextBox)
+        if (sender is AnsiTerminalBox terminalBox)
         {
-            RefreshTerminalViewport(richTextBox);
-        }
-    }
-
-    private void TerminalViewport_TargetUpdated(object sender, DataTransferEventArgs e)
-    {
-        if (sender is RichTextBox richTextBox)
-        {
-            RefreshTerminalViewport(richTextBox);
+            terminalBox.CaretPosition = terminalBox.Document.ContentEnd;
+            terminalBox.ScrollToEnd();
         }
     }
 
@@ -631,14 +622,14 @@ public partial class TerminalControlWindow : Window
 
     private async void TerminalViewport_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (!TryGetOpenSessionParameter(sender, out var session) || sender is not RichTextBox richTextBox)
+        if (!TryGetOpenSessionParameter(sender, out var session) || sender is not AnsiTerminalBox terminalBox)
         {
             return;
         }
 
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
         {
-            if (!string.IsNullOrEmpty(richTextBox.Selection.Text))
+            if (!string.IsNullOrEmpty(terminalBox.Selection.Text))
             {
                 return;
             }
@@ -1113,14 +1104,6 @@ public partial class TerminalControlWindow : Window
 
             AddAgentTimeline(role, content);
         });
-    }
-
-    private void RefreshTerminalViewport(RichTextBox richTextBox)
-    {
-        var rawText = richTextBox.Tag as string ?? string.Empty;
-        richTextBox.Document = TerminalAnsiRenderer.BuildDocument(rawText);
-        richTextBox.CaretPosition = richTextBox.Document.ContentEnd;
-        richTextBox.ScrollToEnd();
     }
 
     private static string BuildExecutionNote(TerminalCommandResult result)
