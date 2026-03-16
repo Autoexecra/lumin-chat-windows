@@ -183,7 +183,7 @@
 
                             <StackPanel>
                                 <TextBlock Text="Agent 控制台" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="自动模式会持续执行，直到模型判断任务完成或明确需要人工输入。实时过程单独放到“AI过程”标签。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="这个标签页默认自动执行，Agent 会持续循环规划和下发命令，直到判断任务完成或需要人工补充。实时过程单独放到“AI过程”标签。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,12">
@@ -205,13 +205,15 @@
                                 </Grid>
                             </Border>
 
-                            <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <TextBlock Text="发送需求" FontWeight="SemiBold"/>
-                                    <TextBox x:Name="AgentRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
-                                    <Button Content="开始自动执行" Click="SendAgentRequest_Click"/>
-                                </StackPanel>
-                            </Border>
+                            <StackPanel Grid.Row="2">
+                                <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="发送需求" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="AgentRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
+                                        <Button Content="发送给 Agent" Click="SendAgentRequest_Click"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
 
                             <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
                                 <StackPanel>
@@ -233,7 +235,7 @@
 
                             <StackPanel>
                                 <TextBlock Text="提示模式" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="这里只给出建议命令，不会自动执行。你手动执行后，会立刻基于最新会话窗口内容继续规划下一步。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="这里只生成下一条建议命令。你手动点击执行后，会自动再次调用 LLM 继续规划。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,12">
@@ -249,7 +251,7 @@
                                         <ComboBox x:Name="PromptTargetSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="SessionId"/>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                        <Button Content="刷新目标会话" Click="RefreshAgentTargets_Click"/>
+                                        <Button Content="刷新目标会话" Click="RefreshPromptTargets_Click"/>
                                         <TextBlock x:Name="PromptStatusTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </Grid>
@@ -260,7 +262,7 @@
                                     <StackPanel>
                                         <TextBlock Text="发送需求" FontWeight="SemiBold"/>
                                         <TextBox x:Name="PromptRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
-                                        <Button Content="生成建议" Click="SendPromptRequest_Click"/>
+                                        <Button Content="生成建议命令" Click="SendPromptRequest_Click"/>
                                     </StackPanel>
                                 </Border>
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
@@ -384,7 +386,7 @@
                             <TabControl.ContentTemplate>
                                 <DataTemplate>
                                     <Border Background="#FF0E141C" CornerRadius="20" Margin="0,6,0,0" Padding="0" BorderBrush="#FF1C3446" BorderThickness="1">
-                                        <local:AnsiTerminalBox AnsiText="{Binding RawOutput, Mode=OneWay}"
+                                        <local:AnsiTerminalBox AnsiText="{Binding RawOutputText, Mode=OneWay}"
                                                                Loaded="TerminalViewport_Loaded"
                                                                PreviewTextInput="TerminalViewport_PreviewTextInput"
                                                                PreviewKeyDown="TerminalViewport_PreviewKeyDown"
@@ -393,8 +395,7 @@
                                                                Foreground="#FFDDEFE7"
                                                                CaretBrush="#FFF5FBFF"
                                                                Background="Transparent"
-                                                               VerticalScrollBarVisibility="Auto"
-                                                               HorizontalScrollBarVisibility="Auto"
+                                                               BorderThickness="0"
                                                                Padding="14,14,14,14"/>
                                     </Border>
                                 </DataTemplate>

@@ -122,6 +122,97 @@ public sealed class TerminalServicesTests
         }
     }
 
+    [Fact]
+    public async Task TerminalAgentService_AutoModeExecutesUntilComplete()
+    {
+        var config = AppConfig.CreateDefault();
+        config.App.MaxToolRounds = 4;
+
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Agent PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            var client = new FakeTerminalAgentChatCompletionClient(
+                new LlmResponse
+                {
+                    Success = true,
+                    Content = """
+                    {"analysis":"先打印标记。","command":"Write-Output 'agent-loop-ok'","complete":false,"need_input":false,"final_message":""}
+                    """,
+                },
+                new LlmResponse
+                {
+                    Success = true,
+                    Content = """
+                    {"analysis":"输出已出现。","command":"","complete":true,"need_input":false,"final_message":"任务完成"}
+                    """,
+                });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+            var dialogue = new List<TerminalAgentDialogueItem>();
+
+            var result = await service.RunLoopAsync(session.SessionId, "打印一个标记并确认完成", dialogue, "auto", TerminalAgentMode.Auto);
+
+            Assert.True(result.Success);
+            Assert.True(result.Completed);
+            Assert.Equal("任务完成", result.FinalMessage);
+            var output = manager.GetRecentOutput(session.SessionId, 4000);
+            Assert.Contains("agent-loop-ok", output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalAgentService_PromptModeReturnsSuggestionWithoutExecuting()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Prompt Agent PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            var client = new FakeTerminalAgentChatCompletionClient(
+                new LlmResponse
+                {
+                    Success = true,
+                    Content = """
+                    {"analysis":"建议先读取版本。","command":"Write-Output 'prompt-only'","complete":false,"need_input":false,"final_message":""}
+                    """,
+                });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+            var dialogue = new List<TerminalAgentDialogueItem>();
+
+            var result = await service.RunLoopAsync(session.SessionId, "只给出下一步建议", dialogue, "auto", TerminalAgentMode.Prompt);
+
+            Assert.True(result.Success);
+            Assert.False(result.Completed);
+            Assert.Equal("Write-Output 'prompt-only'", result.SuggestedCommand);
+            var output = manager.GetRecentOutput(session.SessionId, 4000);
+            Assert.DoesNotContain("prompt-only", output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
     private static int GetFreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -136,5 +227,15 @@ public sealed class TerminalServicesTests
         var path = Path.Combine(Path.GetTempPath(), "LuminChatWinTerminalTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private sealed class FakeTerminalAgentChatCompletionClient(params LlmResponse[] responses) : IChatCompletionClient
+    {
+        private readonly Queue<LlmResponse> _responses = new(responses);
+
+        public Task<LlmResponse> CompleteAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"command\":\"\",\"complete\":true,\"need_input\":false,\"final_message\":\"\"}" });
+        }
     }
 }

@@ -7,137 +7,136 @@ namespace LuminChatWin.App;
 
 internal static class TerminalAnsiRenderer
 {
-    private static readonly Dictionary<int, string> ForegroundPalette = new()
-    {
-        [30] = "#FF1E1E1E",
-        [31] = "#FFE06C75",
-        [32] = "#FF98C379",
-        [33] = "#FFE5C07B",
-        [34] = "#FF61AFEF",
-        [35] = "#FFC678DD",
-        [36] = "#FF56B6C2",
-        [37] = "#FFABB2BF",
-        [90] = "#FF5C6370",
-        [91] = "#FFFB6C6C",
-        [92] = "#FF7EE787",
-        [93] = "#FFF2CC60",
-        [94] = "#FF79C0FF",
-        [95] = "#FFD2A8FF",
-        [96] = "#FF7FE9FF",
-        [97] = "#FFF5FBFF",
-    };
+    private static readonly Brush DefaultForeground = CreateBrush(0xDD, 0xEF, 0xE7);
+    private static readonly Brush DefaultBackground = Brushes.Transparent;
+    private static readonly Brush[] Palette =
+    [
+        CreateBrush(0x17, 0x20, 0x2A),
+        CreateBrush(0xE0, 0x6C, 0x75),
+        CreateBrush(0x98, 0xC3, 0x79),
+        CreateBrush(0xE5, 0xC0, 0x7B),
+        CreateBrush(0x61, 0xAF, 0xEF),
+        CreateBrush(0xC6, 0x78, 0xDD),
+        CreateBrush(0x56, 0xB6, 0xC2),
+        CreateBrush(0xAB, 0xB2, 0xBF),
+        CreateBrush(0x5C, 0x63, 0x70),
+        CreateBrush(0xFF, 0x7B, 0x72),
+        CreateBrush(0xB8, 0xE9, 0x86),
+        CreateBrush(0xFF, 0xD8, 0x66),
+        CreateBrush(0x82, 0xC4, 0xFF),
+        CreateBrush(0xE3, 0x9D, 0xFF),
+        CreateBrush(0x7F, 0xDB, 0xCA),
+        CreateBrush(0xFF, 0xFF, 0xFF),
+    ];
 
-    public static FlowDocument BuildDocument(string rawText)
+    public static FlowDocument Render(string? text)
     {
         var document = new FlowDocument
         {
             PagePadding = new Thickness(0),
-            PageWidth = 100000,
-            TextAlignment = TextAlignment.Left,
             Background = Brushes.Transparent,
             FontFamily = new FontFamily("Consolas"),
             FontSize = 13,
+            LineHeight = 16,
         };
+
         var paragraph = new Paragraph { Margin = new Thickness(0) };
         document.Blocks.Add(paragraph);
 
-        var style = new TerminalTextStyle();
-        var buffer = new StringBuilder();
-        var lineStartIndex = 0;
-
-        for (var index = 0; index < rawText.Length; index++)
+        if (string.IsNullOrEmpty(text))
         {
-            var ch = rawText[index];
-            if (ch == '\u001b')
-            {
-                FlushBuffer(paragraph, buffer, style);
-                index = HandleEscapeSequence(rawText, index, style);
-                continue;
-            }
-
-            switch (ch)
-            {
-                case '\a':
-                    continue;
-                case '\b':
-                    if (buffer.Length > 0)
-                    {
-                        buffer.Length--;
-                    }
-                    else if (paragraph.Inlines.LastInline is Run run && run.Text.Length > 0)
-                    {
-                        run.Text = run.Text[..^1];
-                    }
-                    continue;
-                case '\r':
-                    FlushBuffer(paragraph, buffer, style);
-                    RemoveCurrentLine(paragraph, ref lineStartIndex);
-                    continue;
-                case '\n':
-                    buffer.Append(ch);
-                    FlushBuffer(paragraph, buffer, style);
-                    lineStartIndex = CountVisibleCharacters(paragraph);
-                    continue;
-                default:
-                    buffer.Append(ch);
-                    break;
-            }
+            return document;
         }
 
-        FlushBuffer(paragraph, buffer, style);
+        var state = new RenderState();
+        var buffer = new StringBuilder();
+        for (var index = 0; index < text.Length; index++)
+        {
+            var current = text[index];
+            if (current == '\u001b')
+            {
+                Flush(paragraph, buffer, state);
+                if (TryReadCsi(text, ref index, out var sequence))
+                {
+                    ApplyCsi(sequence, state);
+                    continue;
+                }
+
+                if (TrySkipOsc(text, ref index))
+                {
+                    continue;
+                }
+            }
+
+            buffer.Append(current);
+        }
+
+        Flush(paragraph, buffer, state);
         return document;
     }
 
-    private static int HandleEscapeSequence(string text, int index, TerminalTextStyle style)
+    private static bool TryReadCsi(string text, ref int index, out string sequence)
     {
-        if (index + 1 >= text.Length)
+        sequence = string.Empty;
+        if (index + 1 >= text.Length || text[index + 1] != '[')
         {
-            return index;
+            return false;
         }
 
-        if (text[index + 1] == '[')
+        var end = index + 2;
+        while (end < text.Length)
         {
-            var end = index + 2;
-            while (end < text.Length && text[end] is not ('m' or 'K' or 'J'))
+            var current = text[end];
+            if (current >= '@' && current <= '~')
             {
-                end++;
+                sequence = text[(index + 2)..end];
+                index = end;
+                return current == 'm';
             }
 
-            if (end >= text.Length)
-            {
-                return text.Length - 1;
-            }
-
-            if (text[end] == 'm')
-            {
-                ApplySgr(text[(index + 2)..end], style);
-            }
-
-            return end;
+            end++;
         }
 
-        if (text[index + 1] == ']')
-        {
-            var end = index + 2;
-            while (end < text.Length && text[end] != '\a')
-            {
-                end++;
-            }
-            return Math.Min(end, text.Length - 1);
-        }
-
-        return index;
+        return false;
     }
 
-    private static void ApplySgr(string sequence, TerminalTextStyle style)
+    private static bool TrySkipOsc(string text, ref int index)
+    {
+        if (index + 1 >= text.Length || text[index + 1] != ']')
+        {
+            return false;
+        }
+
+        var end = index + 2;
+        while (end < text.Length)
+        {
+            if (text[end] == '\a')
+            {
+                index = end;
+                return true;
+            }
+
+            if (text[end] == '\u001b' && end + 1 < text.Length && text[end + 1] == '\\')
+            {
+                index = end + 1;
+                return true;
+            }
+
+            end++;
+        }
+
+        return true;
+    }
+
+    private static void ApplyCsi(string sequence, RenderState state)
     {
         var parts = string.IsNullOrWhiteSpace(sequence)
             ? ["0"]
-            : sequence.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            : sequence.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-        foreach (var part in parts)
+        for (var index = 0; index < parts.Length; index++)
         {
-            if (!int.TryParse(part, out var code))
+            if (!int.TryParse(parts[index], out var code))
             {
                 continue;
             }
@@ -145,79 +144,131 @@ internal static class TerminalAnsiRenderer
             switch (code)
             {
                 case 0:
-                    style.Reset();
+                    state.Reset();
                     break;
                 case 1:
-                    style.Bold = true;
+                    state.Bold = true;
                     break;
                 case 22:
-                    style.Bold = false;
+                    state.Bold = false;
+                    break;
+                case 30 when Palette.Length > 0:
+                case 31:
+                case 32:
+                case 33:
+                case 34:
+                case 35:
+                case 36:
+                case 37:
+                    state.Foreground = Palette[code - 30];
                     break;
                 case 39:
-                    style.ForegroundHex = null;
+                    state.Foreground = DefaultForeground;
                     break;
-                default:
-                    if (ForegroundPalette.TryGetValue(code, out var color))
-                    {
-                        style.ForegroundHex = color;
-                    }
+                case 40:
+                case 41:
+                case 42:
+                case 43:
+                case 44:
+                case 45:
+                case 46:
+                case 47:
+                    state.Background = Palette[code - 40];
+                    break;
+                case 49:
+                    state.Background = DefaultBackground;
+                    break;
+                case 90:
+                case 91:
+                case 92:
+                case 93:
+                case 94:
+                case 95:
+                case 96:
+                case 97:
+                    state.Foreground = Palette[8 + (code - 90)];
+                    break;
+                case 100:
+                case 101:
+                case 102:
+                case 103:
+                case 104:
+                case 105:
+                case 106:
+                case 107:
+                    state.Background = Palette[8 + (code - 100)];
+                    break;
+                case 38 when index + 2 < parts.Length && parts[index + 1] == "5" && int.TryParse(parts[index + 2], out var fgIndex):
+                    state.Foreground = From256Color(fgIndex);
+                    index += 2;
+                    break;
+                case 48 when index + 2 < parts.Length && parts[index + 1] == "5" && int.TryParse(parts[index + 2], out var bgIndex):
+                    state.Background = From256Color(bgIndex);
+                    index += 2;
                     break;
             }
         }
     }
 
-    private static void FlushBuffer(Paragraph paragraph, StringBuilder buffer, TerminalTextStyle style)
+    private static void Flush(Paragraph paragraph, StringBuilder buffer, RenderState state)
     {
         if (buffer.Length == 0)
         {
             return;
         }
 
-        var run = new Run(buffer.ToString());
-        run.Foreground = style.ForegroundHex is null
-            ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFDDEFE7"))
-            : new SolidColorBrush((Color)ColorConverter.ConvertFromString(style.ForegroundHex));
-        run.FontWeight = style.Bold ? FontWeights.SemiBold : FontWeights.Normal;
+        var run = new Run(buffer.ToString())
+        {
+            Foreground = state.Foreground,
+            Background = state.Background,
+            FontWeight = state.Bold ? FontWeights.Bold : FontWeights.Normal,
+        };
         paragraph.Inlines.Add(run);
         buffer.Clear();
     }
 
-    private static void RemoveCurrentLine(Paragraph paragraph, ref int lineStartIndex)
+    private static Brush From256Color(int index)
     {
-        var currentLength = CountVisibleCharacters(paragraph);
-        var removeCount = Math.Max(0, currentLength - lineStartIndex);
-        if (removeCount == 0)
+        if (index < 0)
         {
-            return;
+            return DefaultForeground;
         }
 
-        while (removeCount > 0 && paragraph.Inlines.LastInline is Run run)
+        if (index < 16)
         {
-            if (run.Text.Length <= removeCount)
-            {
-                removeCount -= run.Text.Length;
-                paragraph.Inlines.Remove(run);
-                continue;
-            }
-
-            run.Text = run.Text[..(run.Text.Length - removeCount)];
-            removeCount = 0;
+            return Palette[Math.Min(index, Palette.Length - 1)];
         }
+
+        if (index < 232)
+        {
+            var colorIndex = index - 16;
+            var r = colorIndex / 36;
+            var g = (colorIndex % 36) / 6;
+            var b = colorIndex % 6;
+            return CreateBrush((byte)(r == 0 ? 0 : r * 40 + 55), (byte)(g == 0 ? 0 : g * 40 + 55), (byte)(b == 0 ? 0 : b * 40 + 55));
+        }
+
+        var level = (byte)(8 + (index - 232) * 10);
+        return CreateBrush(level, level, level);
     }
 
-    private static int CountVisibleCharacters(Paragraph paragraph)
+    private static SolidColorBrush CreateBrush(byte r, byte g, byte b)
     {
-        return paragraph.Inlines.OfType<Run>().Sum(run => run.Text.Length);
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
     }
 
-    private sealed class TerminalTextStyle
+    private sealed class RenderState
     {
-        public string? ForegroundHex { get; set; }
+        public Brush Foreground { get; set; } = DefaultForeground;
+        public Brush Background { get; set; } = DefaultBackground;
         public bool Bold { get; set; }
 
         public void Reset()
         {
-            ForegroundHex = null;
+            Foreground = DefaultForeground;
+            Background = DefaultBackground;
             Bold = false;
         }
     }

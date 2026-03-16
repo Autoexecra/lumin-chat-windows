@@ -9,7 +9,18 @@ public sealed class AnsiTerminalBox : RichTextBox
         nameof(AnsiText),
         typeof(string),
         typeof(AnsiTerminalBox),
-        new PropertyMetadata(string.Empty, OnAnsiTextChanged));
+        new FrameworkPropertyMetadata(string.Empty, FrameworkPropertyMetadataOptions.AffectsRender, OnAnsiTextChanged));
+
+    private bool _updatingDocument;
+
+    public AnsiTerminalBox()
+    {
+        IsReadOnly = true;
+        IsUndoEnabled = false;
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+        Document = TerminalAnsiRenderer.Render(string.Empty);
+    }
 
     public string AnsiText
     {
@@ -17,23 +28,30 @@ public sealed class AnsiTerminalBox : RichTextBox
         set => SetValue(AnsiTextProperty, value);
     }
 
-    public AnsiTerminalBox()
-    {
-        IsReadOnly = true;
-        IsUndoEnabled = false;
-        BorderThickness = new Thickness(0);
-        Background = null;
-    }
-
     private static void OnAnsiTextChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
     {
-        if (dependencyObject is not AnsiTerminalBox terminalBox)
+        if (dependencyObject is AnsiTerminalBox box)
+        {
+            box.UpdateDocument(e.NewValue as string ?? string.Empty);
+        }
+    }
+
+    private void UpdateDocument(string text)
+    {
+        if (_updatingDocument)
         {
             return;
         }
 
-        terminalBox.Document = TerminalAnsiRenderer.BuildDocument(e.NewValue as string ?? string.Empty);
-        terminalBox.CaretPosition = terminalBox.Document.ContentEnd;
-        terminalBox.ScrollToEnd();
+        try
+        {
+            _updatingDocument = true;
+            Document = TerminalAnsiRenderer.Render(text);
+            ScrollToEnd();
+        }
+        finally
+        {
+            _updatingDocument = false;
+        }
     }
 }

@@ -66,6 +66,7 @@ public sealed class TerminalAgentService
             if (!string.IsNullOrWhiteSpace(turn.Analysis))
             {
                 dialogue.Add(new TerminalAgentDialogueItem { Role = "assistant", Content = turn.Analysis });
+                progress?.Report(new AgentEvent { Type = AgentEventType.Content, Message = turn.Analysis });
             }
 
             if (turn.Completed || (string.IsNullOrWhiteSpace(turn.SuggestedCommand) && turn.NeedInput))
@@ -134,6 +135,25 @@ public sealed class TerminalAgentService
             Success = false,
             Error = "达到最大规划轮次，任务已停止。",
         };
+    }
+
+    public async Task<TerminalAgentPlan> RunStepAsync(
+        string sessionId,
+        string objective,
+        IReadOnlyList<TerminalAgentDialogueItem> dialogue,
+        string? selectedModel = null,
+        bool autoExecute = false,
+        CancellationToken cancellationToken = default)
+    {
+        var mutableDialogue = dialogue.ToList();
+        return await RunLoopAsync(
+            sessionId,
+            objective,
+            mutableDialogue,
+            selectedModel,
+            autoExecute ? TerminalAgentMode.Auto : TerminalAgentMode.Prompt,
+            progress: null,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<TerminalAgentPlan> PlanTurnAsync(
@@ -239,7 +259,7 @@ public sealed class TerminalAgentService
     {
         var builder = new StringBuilder();
         builder.AppendLine("你是串口终端执行代理。目标是控制当前终端会话，持续规划直到任务完成。")
-            .AppendLine("你的职责是：先分析当前串口/终端输出，再决定下一条终端命令，必要时使用远程资料工具补充上下文。")
+            .AppendLine("你的职责是：先分析当前终端窗口内容，再决定下一条终端命令，必要时使用远程资料工具补充上下文。")
             .AppendLine()
             .AppendLine("强约束:")
             .AppendLine("- 当前终端是主要执行面，不要调用本机文件、git、本机 shell 等无关工具。")
@@ -255,24 +275,27 @@ public sealed class TerminalAgentService
         return builder.ToString();
     }
 
-    private static string BuildUserPrompt(TerminalSessionInfo session, string objective, IList<TerminalAgentDialogueItem> dialogue, string transcript)
+    private static string BuildUserPrompt(TerminalSessionInfo session, string objective, IEnumerable<TerminalAgentDialogueItem> dialogue, string transcript)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("任务目标:")
-            .AppendLine(string.IsNullOrWhiteSpace(objective) ? "<empty>" : objective)
-            .AppendLine()
-            .AppendLine("当前终端会话窗口最新内容(最多 10000 字符):")
-            .AppendLine(string.IsNullOrWhiteSpace(transcript) ? "<empty>" : transcript)
-            .AppendLine()
-            .AppendLine("最近对话与过程记录:");
-
+        builder.AppendLine($"Session kind: {session.Kind}");
+        builder.AppendLine($"Session title: {session.Title}");
+        builder.AppendLine($"Session descriptor: {session.Descriptor}");
+        builder.AppendLine();
+        builder.AppendLine("Objective:");
+        builder.AppendLine(string.IsNullOrWhiteSpace(objective) ? "No objective provided." : objective);
+        builder.AppendLine();
+        builder.AppendLine("Current terminal window content (latest 10000 chars):");
+        builder.AppendLine(string.IsNullOrWhiteSpace(transcript) ? "<empty>" : transcript);
+        builder.AppendLine();
+        builder.AppendLine("Recent dialogue and execution notes:");
         foreach (var item in dialogue.TakeLast(20))
         {
             builder.AppendLine($"[{item.Role}] {item.Content}");
         }
 
-        builder.AppendLine()
-            .AppendLine("请基于当前终端窗口内容判断任务是否完成，并给出下一步。不要输出 JSON 以外内容。");
+        builder.AppendLine();
+        builder.AppendLine("Return only JSON.");
         return builder.ToString();
     }
 
@@ -310,12 +333,6 @@ public sealed class TerminalAgentService
         };
     }
 
-    private static string BuildExecutionNote(TerminalCommandResult result)
-    {
-        var output = string.IsNullOrWhiteSpace(result.Output) ? "<empty>" : result.Output;
-        return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
-    }
-
     private static TerminalAgentPlan ParsePlan(string raw)
     {
         try
@@ -323,17 +340,14 @@ public sealed class TerminalAgentService
             var json = ExtractJson(raw);
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            var finalMessage = root.TryGetProperty("final_message", out var finalMessageElement) ? finalMessageElement.GetString() ?? string.Empty : string.Empty;
-            var complete = root.TryGetProperty("complete", out var completeElement) && completeElement.ValueKind == JsonValueKind.True;
-            var needInput = root.TryGetProperty("need_input", out var needInputElement) && needInputElement.ValueKind == JsonValueKind.True;
             return new TerminalAgentPlan
             {
                 Success = true,
-                Completed = complete,
-                NeedInput = needInput,
+                Completed = root.TryGetProperty("complete", out var completeElement) && completeElement.ValueKind == JsonValueKind.True,
+                NeedInput = root.TryGetProperty("need_input", out var needInputElement) && needInputElement.ValueKind == JsonValueKind.True,
                 Analysis = root.TryGetProperty("analysis", out var analysis) ? analysis.GetString() ?? string.Empty : string.Empty,
                 SuggestedCommand = root.TryGetProperty("command", out var command) ? command.GetString() ?? string.Empty : string.Empty,
-                FinalMessage = finalMessage,
+                FinalMessage = root.TryGetProperty("final_message", out var finalMessage) ? finalMessage.GetString() ?? string.Empty : string.Empty,
                 RawResponse = raw,
             };
         }
@@ -362,5 +376,11 @@ public sealed class TerminalAgentService
         }
 
         return trimmed;
+    }
+
+    private static string BuildExecutionNote(TerminalCommandResult result)
+    {
+        var output = string.IsNullOrWhiteSpace(result.Output) ? "<empty>" : result.Output;
+        return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
     }
 }
