@@ -31,7 +31,7 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
         _sessionId = sessionId;
         _sendInputAsync = sendInputAsync;
         _executeCommandAsync = executeCommandAsync;
-        _username = string.IsNullOrWhiteSpace(config.Username) ? "root" : config.Username.Trim();
+        _username = config.Username?.Trim() ?? string.Empty;
         _password = config.Password ?? string.Empty;
         _execTimeout = TimeSpan.FromSeconds(Math.Max(3, config.ExecTimeoutSeconds));
 
@@ -49,7 +49,9 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
             Host = bindAddress.ToString(),
             Port = port,
             Protocol = "ssh",
-            Message = $"Use ssh -p {port} {_username}@{bindAddress}.",
+            Message = string.IsNullOrWhiteSpace(_username)
+                ? $"Use ssh -p {port} <username>@{bindAddress} (any username, empty password by default)."
+                : $"Use ssh -p {port} {_username}@{bindAddress}.",
         };
     }
 
@@ -126,7 +128,9 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
 
     private void UserAuthService_UserAuth(object? sender, UserauthArgs e)
     {
-        e.Result = string.Equals(e.Username, _username, StringComparison.Ordinal) && string.Equals(e.Password ?? string.Empty, _password, StringComparison.Ordinal);
+        var usernameAllowed = string.IsNullOrWhiteSpace(_username) || string.Equals(e.Username, _username, StringComparison.Ordinal);
+        var passwordAllowed = string.Equals(e.Password ?? string.Empty, _password, StringComparison.Ordinal);
+        e.Result = usernameAllowed && passwordAllowed;
     }
 
     private void ConnectionService_CommandOpened(object? sender, CommandRequestedArgs e)

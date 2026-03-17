@@ -1,6 +1,8 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using LuminChatWin.Core.Models;
+using LuminChatWin.Core.Services;
 
 namespace LuminChatWin.App;
 
@@ -18,16 +20,16 @@ public partial class SettingsWindow : Window
         BuildGeneral();
         BuildPrompts();
         BuildPolicy();
+        BuildTerminal();
         BuildSecondary();
         BuildKnowledge();
-        BuildDeploy();
         BuildLicense();
     }
 
     private void BuildGeneral()
     {
         AddTextBox(GeneralPanel, "default_model_level", "默认模型级别", _draft.App.DefaultModelLevel.ToString());
-        AddComboBox(GeneralPanel, "theme_id", "主题", ThemeManager.Themes.Select(static theme => theme.Id).ToList(), _draft.App.ThemeId, themeId => ThemeManager.GetTheme(themeId).Name);
+        AddComboBox(GeneralPanel, "theme_id", "主题", ThemeManager.Themes.Select(static theme => theme.Id).ToList(), _draft.App.ThemeId, themeId => ThemeManager.GetTheme(themeId).Name, false, ThemeComboBox_SelectionChanged);
         AddTextBox(GeneralPanel, "default_approval_policy", "默认审批策略", _draft.App.DefaultApprovalPolicy);
         AddTextBox(GeneralPanel, "max_tool_rounds", "最大工具轮次", _draft.App.MaxToolRounds.ToString());
         AddTextBox(GeneralPanel, "session_dir", "会话目录", _draft.App.SessionDir);
@@ -42,24 +44,32 @@ public partial class SettingsWindow : Window
     private void BuildPrompts()
     {
         AddTextBox(PromptPanel, "prompt_library_dir", "提示词库目录", _draft.Prompts.PromptLibraryDir);
-        AddComboBox(PromptPanel, "selected_system_prompt_file", "系统提示词文件", _runtime.GetPromptFiles().ToList(), _draft.Prompts.SelectedSystemPromptFile, value => string.IsNullOrWhiteSpace(value) ? "未选择" : value, true);
-        AddMultiLineTextBox(PromptPanel, "system_prompt_template", "系统提示词补充模板", _draft.Prompts.SystemPromptTemplate);
-        AddComboBox(PromptPanel, "selected_user_prompt_file", "用户提示词文件", _runtime.GetPromptFiles().ToList(), _draft.Prompts.SelectedUserPromptFile, value => string.IsNullOrWhiteSpace(value) ? "未选择" : value, true);
-        AddMultiLineTextBox(PromptPanel, "user_prompt_template", "用户提示词模板", _draft.Prompts.UserPromptTemplate);
-        PromptPanel.Children.Add(new TextBlock
-        {
-            Text = "用户提示词模板可使用 {input} 占位符。若选择了外部文件，则优先读取提示词库中的文件内容。",
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 6, 0, 0),
-        });
+        var promptRoot = ConfigService.ExpandPath(_draft.Prompts.PromptLibraryDir);
+        AddInfoText(PromptPanel, $"手动修改系统提示词文件: {Path.Combine(promptRoot, "default-system.md")}");
+        AddInfoText(PromptPanel, $"手动修改用户提示词文件: {Path.Combine(promptRoot, "default-user.prompt")}");
+        AddMultiLineTextBox(PromptPanel, "system_prompt_template", "系统提示词追加内容", _draft.Prompts.SystemPromptTemplate);
+        AddMultiLineTextBox(PromptPanel, "user_prompt_template", "用户提示词追加内容", _draft.Prompts.UserPromptTemplate == "{input}" ? string.Empty : _draft.Prompts.UserPromptTemplate);
+        AddInfoText(PromptPanel, "这里填写的内容会追加到默认提示词文件后面；用户提示词可使用 {input} 占位符。留空则只使用默认提示词文件。", new Thickness(0, 6, 0, 0));
     }
 
     private void BuildPolicy()
     {
-        AddTextBox(PolicyPanel, "command_policy_mode", "策略模式", _draft.CommandPolicy.Mode);
+        AddComboBox(PolicyPanel, "command_policy_mode", "策略模式", ["blacklist", "whitelist"], _draft.CommandPolicy.Mode, mode => mode == "whitelist" ? "白名单" : "黑名单");
         AddMultiLineTextBox(PolicyPanel, "command_policy_blacklist", "黑名单", string.Join(Environment.NewLine, _draft.CommandPolicy.Blacklist));
         AddMultiLineTextBox(PolicyPanel, "command_policy_whitelist", "白名单", string.Join(Environment.NewLine, _draft.CommandPolicy.Whitelist));
         AddMultiLineTextBox(PolicyPanel, "command_policy_extension_rules", "扩展规则", string.Join(Environment.NewLine, _draft.CommandPolicy.ExtensionRules));
+    }
+
+    private void BuildTerminal()
+    {
+        AddCheckBox(TerminalPanel, "serial_bridge_enabled", "启用串口 SSH Bridge", _draft.Terminal.SerialSshBridge.Enabled);
+        AddTextBox(TerminalPanel, "serial_bridge_bind_host", "绑定主机", _draft.Terminal.SerialSshBridge.BindHost);
+        AddTextBox(TerminalPanel, "serial_bridge_port_prefix", "默认端口前缀", _draft.Terminal.SerialSshBridge.PortPrefix);
+        AddTextBox(TerminalPanel, "serial_bridge_username", "桥接用户名（留空表示接受任意用户名）", _draft.Terminal.SerialSshBridge.Username);
+        AddTextBox(TerminalPanel, "serial_bridge_password", "桥接密码（留空表示空密码）", _draft.Terminal.SerialSshBridge.Password);
+        AddTextBox(TerminalPanel, "serial_bridge_exec_timeout", "命令超时秒数", _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds.ToString("0.##"));
+        AddTextBox(TerminalPanel, "serial_bridge_host_key_path", "Host Key 路径", _draft.Terminal.SerialSshBridge.HostKeyPath);
+        AddInfoText(TerminalPanel, "标准 SSH 协议必须带用户名，无法真正做到完全无账号；当前实现支持用户名留空时接受任意用户名，密码留空时允许空密码。", new Thickness(0, 6, 0, 0));
     }
 
     private void BuildSecondary()
@@ -80,20 +90,6 @@ public partial class SettingsWindow : Window
         AddTextBox(KnowledgePanel, "knowledge_password", "密码", _draft.KnowledgeBase.Password);
         AddTextBox(KnowledgePanel, "knowledge_root_dir", "根目录", _draft.KnowledgeBase.RootDir);
         AddMultiLineTextBox(KnowledgePanel, "knowledge_patterns", "匹配模式", string.Join(Environment.NewLine, _draft.KnowledgeBase.Patterns));
-    }
-
-    private void BuildDeploy()
-    {
-        AddTextBox(DeployPanel, "deploy_host", "部署主机", _draft.Deploy.Host);
-        AddTextBox(DeployPanel, "deploy_port", "部署端口", _draft.Deploy.Port.ToString());
-        AddTextBox(DeployPanel, "deploy_user", "部署用户", _draft.Deploy.User);
-        AddTextBox(DeployPanel, "deploy_remote_dir", "部署目录", _draft.Deploy.RemoteDir);
-        AddCheckBox(DeployPanel, "build_enabled", "启用构建服务器", _draft.BuildServer.Enabled);
-        AddTextBox(DeployPanel, "build_host", "构建主机", _draft.BuildServer.Host);
-        AddTextBox(DeployPanel, "build_port", "构建端口", _draft.BuildServer.Port.ToString());
-        AddTextBox(DeployPanel, "build_user", "构建用户", _draft.BuildServer.User);
-        AddTextBox(DeployPanel, "build_password", "构建密码", _draft.BuildServer.Password);
-        AddTextBox(DeployPanel, "build_remote_dir", "构建目录", _draft.BuildServer.RemoteDir);
     }
 
     private void BuildLicense()
@@ -123,15 +119,23 @@ public partial class SettingsWindow : Window
         _draft.App.WorkspaceContextEnabled = ReadCheckBox("workspace_context_enabled", _draft.App.WorkspaceContextEnabled);
 
         _draft.Prompts.PromptLibraryDir = ReadText("prompt_library_dir", _draft.Prompts.PromptLibraryDir);
-        _draft.Prompts.SelectedSystemPromptFile = ReadComboBoxText("selected_system_prompt_file", _draft.Prompts.SelectedSystemPromptFile);
         _draft.Prompts.SystemPromptTemplate = ReadText("system_prompt_template", _draft.Prompts.SystemPromptTemplate);
-        _draft.Prompts.SelectedUserPromptFile = ReadComboBoxText("selected_user_prompt_file", _draft.Prompts.SelectedUserPromptFile);
-        _draft.Prompts.UserPromptTemplate = ReadText("user_prompt_template", _draft.Prompts.UserPromptTemplate);
+        _draft.Prompts.SelectedSystemPromptFile = string.Empty;
+        _draft.Prompts.SelectedUserPromptFile = string.Empty;
+        _draft.Prompts.UserPromptTemplate = ReadText("user_prompt_template", string.Empty);
 
-        _draft.CommandPolicy.Mode = ReadText("command_policy_mode", _draft.CommandPolicy.Mode);
+        _draft.CommandPolicy.Mode = ReadComboBoxText("command_policy_mode", _draft.CommandPolicy.Mode);
         _draft.CommandPolicy.Blacklist = ReadLines("command_policy_blacklist");
         _draft.CommandPolicy.Whitelist = ReadLines("command_policy_whitelist");
         _draft.CommandPolicy.ExtensionRules = ReadLines("command_policy_extension_rules");
+
+        _draft.Terminal.SerialSshBridge.Enabled = ReadCheckBox("serial_bridge_enabled", _draft.Terminal.SerialSshBridge.Enabled);
+        _draft.Terminal.SerialSshBridge.BindHost = ReadText("serial_bridge_bind_host", _draft.Terminal.SerialSshBridge.BindHost);
+        _draft.Terminal.SerialSshBridge.PortPrefix = ReadText("serial_bridge_port_prefix", _draft.Terminal.SerialSshBridge.PortPrefix);
+        _draft.Terminal.SerialSshBridge.Username = ReadText("serial_bridge_username", _draft.Terminal.SerialSshBridge.Username);
+        _draft.Terminal.SerialSshBridge.Password = ReadText("serial_bridge_password", _draft.Terminal.SerialSshBridge.Password);
+        _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds = ReadDouble("serial_bridge_exec_timeout", _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds);
+        _draft.Terminal.SerialSshBridge.HostKeyPath = ReadText("serial_bridge_host_key_path", _draft.Terminal.SerialSshBridge.HostKeyPath);
 
         _draft.SecondaryServer.Enabled = ReadCheckBox("secondary_enabled", _draft.SecondaryServer.Enabled);
         _draft.SecondaryServer.Host = ReadText("secondary_host", _draft.SecondaryServer.Host);
@@ -146,17 +150,6 @@ public partial class SettingsWindow : Window
         _draft.KnowledgeBase.Password = ReadText("knowledge_password", _draft.KnowledgeBase.Password);
         _draft.KnowledgeBase.RootDir = ReadText("knowledge_root_dir", _draft.KnowledgeBase.RootDir);
         _draft.KnowledgeBase.Patterns = ReadLines("knowledge_patterns");
-
-        _draft.Deploy.Host = ReadText("deploy_host", _draft.Deploy.Host);
-        _draft.Deploy.Port = ReadInt("deploy_port", _draft.Deploy.Port);
-        _draft.Deploy.User = ReadText("deploy_user", _draft.Deploy.User);
-        _draft.Deploy.RemoteDir = ReadText("deploy_remote_dir", _draft.Deploy.RemoteDir);
-        _draft.BuildServer.Enabled = ReadCheckBox("build_enabled", _draft.BuildServer.Enabled);
-        _draft.BuildServer.Host = ReadText("build_host", _draft.BuildServer.Host);
-        _draft.BuildServer.Port = ReadInt("build_port", _draft.BuildServer.Port);
-        _draft.BuildServer.User = ReadText("build_user", _draft.BuildServer.User);
-        _draft.BuildServer.Password = ReadText("build_password", _draft.BuildServer.Password);
-        _draft.BuildServer.RemoteDir = ReadText("build_remote_dir", _draft.BuildServer.RemoteDir);
 
         _draft.License.Enabled = ReadCheckBox("license_enabled", _draft.License.Enabled);
         _draft.License.Subject = ReadText("license_subject", _draft.License.Subject);
@@ -199,7 +192,7 @@ public partial class SettingsWindow : Window
         panel.Children.Add(box);
     }
 
-    private void AddComboBox(Panel panel, string key, string label, IReadOnlyList<string> items, string selected, Func<string, string>? displaySelector = null, bool allowEmpty = false)
+    private void AddComboBox(Panel panel, string key, string label, IReadOnlyList<string> items, string selected, Func<string, string>? displaySelector = null, bool allowEmpty = false, SelectionChangedEventHandler? selectionChanged = null)
     {
         panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 4), FontWeight = FontWeights.SemiBold });
         var comboBox = new ComboBox { DisplayMemberPath = "Display", SelectedValuePath = "Value" };
@@ -211,8 +204,23 @@ public partial class SettingsWindow : Window
         source.AddRange(items.Select(item => new ComboItem(item, displaySelector?.Invoke(item) ?? item)));
         comboBox.ItemsSource = source;
         comboBox.SelectedValue = selected;
+        if (selectionChanged is not null)
+        {
+            comboBox.SelectionChanged += selectionChanged;
+        }
         _controls[key] = comboBox;
         panel.Children.Add(comboBox);
+    }
+
+    private void AddInfoText(Panel panel, string text, Thickness? margin = null)
+    {
+        panel.Children.Add(new TextBlock
+        {
+            Text = text,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (System.Windows.Media.Brush?)FindResource("MutedBrush"),
+            Margin = margin ?? new Thickness(0, 4, 0, 8),
+        });
     }
 
     private string ReadText(string key, string fallback) => _controls[key] is TextBox box ? box.Text.Trim() : fallback;
@@ -221,7 +229,19 @@ public partial class SettingsWindow : Window
 
     private int ReadInt(string key, int fallback) => int.TryParse(ReadText(key, fallback.ToString()), out var value) ? value : fallback;
 
+    private double ReadDouble(string key, double fallback) => double.TryParse(ReadText(key, fallback.ToString("0.##")), out var value) ? value : fallback;
+
     private bool ReadCheckBox(string key, bool fallback) => _controls[key] is CheckBox box ? box.IsChecked == true : fallback;
+
+    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ComboBox comboBox || comboBox.SelectedValue is not string themeId || string.IsNullOrWhiteSpace(themeId) || Application.Current is null)
+        {
+            return;
+        }
+
+        ThemeManager.ApplyTheme(Application.Current.Resources, themeId);
+    }
 
     private List<string> ReadLines(string key)
     {

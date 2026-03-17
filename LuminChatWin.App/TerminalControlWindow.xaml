@@ -334,7 +334,10 @@
                                         <TextBlock Text="串口 SSH Bridge" FontSize="18" FontWeight="SemiBold"/>
                                         <TextBlock Text="这里只保留串口选择、端口保存和手工打开。保存后，开启了 SSH 共享的串口会话在下次打开时会自动套用该端口。" Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                         <ComboBox x:Name="BridgeSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="PortKey" SelectionChanged="BridgeSessionComboBox_SelectionChanged"/>
-                                        <TextBox x:Name="BridgePortTextBox" Text="" Margin="0,8,0,0"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="端口" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                                            <TextBox x:Name="BridgePortTextBox" Width="140" Text=""/>
+                                        </StackPanel>
                                         <StackPanel Orientation="Horizontal">
                                             <Button Content="保存设置" Click="SaveBridgeSettings_Click"/>
                                             <Button Content="立即打开共享端口" Style="{StaticResource SubtleButtonStyle}" Click="OpenBridge_Click"/>
@@ -369,7 +372,6 @@
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="LLM 配置" Style="{StaticResource SubtleButtonStyle}" Click="OpenLlmConfig_Click"/>
                             <Button Content="综合配置" Style="{StaticResource SubtleButtonStyle}" Click="OpenSettings_Click"/>
-                            <ComboBox x:Name="ThemeComboBox" Width="180" Margin="0,0,8,0" SelectionChanged="ThemeComboBox_SelectionChanged"/>
                             <Button Content="切换工作区" Style="{StaticResource SubtleButtonStyle}" Click="ChangeWorkspace_Click"/>
                             <Button Content="刷新会话" Click="RefreshOpenSessions_Click"/>
                             <Button Content="关闭当前会话" Style="{StaticResource SubtleButtonStyle}" Click="CloseCurrentSession_Click"/>

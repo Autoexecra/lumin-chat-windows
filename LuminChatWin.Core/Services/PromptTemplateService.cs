@@ -7,24 +7,16 @@ public static class PromptTemplateService
 {
     public static string ResolveSystemPromptTemplate(AppConfig config)
     {
-        var fileTemplate = LoadTemplate(config.Prompts.PromptLibraryDir, config.Prompts.SelectedSystemPromptFile);
-        if (!string.IsNullOrWhiteSpace(fileTemplate))
-        {
-            return fileTemplate;
-        }
-
-        return config.Prompts.SystemPromptTemplate;
+        var baseTemplate = LoadTemplate(config.Prompts.PromptLibraryDir, "default-system.md");
+        return AppendTemplate(baseTemplate, config.Prompts.SystemPromptTemplate);
     }
 
     public static string ResolveUserPromptTemplate(AppConfig config)
     {
-        var fileTemplate = LoadTemplate(config.Prompts.PromptLibraryDir, config.Prompts.SelectedUserPromptFile);
-        if (!string.IsNullOrWhiteSpace(fileTemplate))
-        {
-            return fileTemplate;
-        }
-
-        return string.IsNullOrWhiteSpace(config.Prompts.UserPromptTemplate) ? "{input}" : config.Prompts.UserPromptTemplate;
+        var baseTemplate = LoadTemplate(config.Prompts.PromptLibraryDir, "default-user.prompt");
+        var inlineTemplate = string.IsNullOrWhiteSpace(config.Prompts.UserPromptTemplate) ? string.Empty : config.Prompts.UserPromptTemplate;
+        var combined = AppendTemplate(baseTemplate, inlineTemplate);
+        return string.IsNullOrWhiteSpace(combined) ? "{input}" : combined;
     }
 
     public static IReadOnlyList<string> ListPromptFiles(AppConfig config)
@@ -70,5 +62,23 @@ public static class PromptTemplateService
         Directory.CreateDirectory(root);
         var fullPath = Path.Combine(root, fileName);
         return File.Exists(fullPath) ? File.ReadAllText(fullPath) : string.Empty;
+    }
+
+    private static string AppendTemplate(string baseTemplate, string appendedTemplate)
+    {
+        var baseText = baseTemplate.Trim();
+        var appendText = appendedTemplate.Trim();
+
+        if (string.IsNullOrWhiteSpace(baseText))
+        {
+            return appendText;
+        }
+
+        if (string.IsNullOrWhiteSpace(appendText))
+        {
+            return baseText;
+        }
+
+        return $"{baseText}{Environment.NewLine}{Environment.NewLine}{appendText}";
     }
 }

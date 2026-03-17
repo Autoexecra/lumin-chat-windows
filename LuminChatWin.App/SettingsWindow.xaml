@@ -23,14 +23,14 @@
                 <TabItem Header="命令策略">
                     <ScrollViewer><StackPanel x:Name="PolicyPanel" Margin="20,0,0,0"/></ScrollViewer>
                 </TabItem>
+                <TabItem Header="终端">
+                    <ScrollViewer><StackPanel x:Name="TerminalPanel" Margin="20,0,0,0"/></ScrollViewer>
+                </TabItem>
                 <TabItem Header="辅助服务器">
                     <ScrollViewer><StackPanel x:Name="SecondaryPanel" Margin="20,0,0,0"/></ScrollViewer>
                 </TabItem>
                 <TabItem Header="知识库">
                     <ScrollViewer><StackPanel x:Name="KnowledgePanel" Margin="20,0,0,0"/></ScrollViewer>
-                </TabItem>
-                <TabItem Header="部署与构建">
-                    <ScrollViewer><StackPanel x:Name="DeployPanel" Margin="20,0,0,0"/></ScrollViewer>
                 </TabItem>
                 <TabItem Header="许可证与调试">
                     <ScrollViewer><StackPanel x:Name="LicensePanel" Margin="20,0,0,0"/></ScrollViewer>

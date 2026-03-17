@@ -34,10 +34,6 @@ public partial class TerminalControlWindow : Window
         ProfilesListBox.ItemsSource = _profiles;
         OpenSessionsTabControl.ItemsSource = _openSessions;
         AgentTimelineListBox.ItemsSource = _agentTimeline;
-        ThemeComboBox.ItemsSource = ThemeManager.Themes;
-        ThemeComboBox.DisplayMemberPath = nameof(ThemePalette.Name);
-        ThemeComboBox.SelectedValuePath = nameof(ThemePalette.Id);
-        ThemeComboBox.SelectedValue = runtime.Config.App.ThemeId;
 
         PowerShellProgramTextBox.Text = runtime.Config.Terminal.DefaultPowershellProgram;
         PowerShellArgsTextBox.Text = runtime.Config.Terminal.DefaultPowershellArgs;
@@ -73,7 +69,6 @@ public partial class TerminalControlWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            ThemeComboBox.SelectedValue = _runtime.Config.App.ThemeId;
             RefreshApiSummary();
             RefreshModelChoices();
             RefreshProfiles();
@@ -142,24 +137,6 @@ public partial class TerminalControlWindow : Window
             Owner = this,
         };
         window.Show();
-    }
-
-    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!IsLoaded || ThemeComboBox.SelectedValue is not string themeId || string.IsNullOrWhiteSpace(themeId))
-        {
-            return;
-        }
-
-        if (string.Equals(_runtime.Config.App.ThemeId, themeId, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        var config = _runtime.ConfigService.LoadOrCreate();
-        config.App.ThemeId = themeId;
-        _runtime.SaveConfig(config);
-        SetWindowStatus($"已切换主题：{ThemeManager.GetTheme(themeId).Name}", isMuted: true);
     }
 
     private void ChangeWorkspace_Click(object sender, RoutedEventArgs e)
@@ -600,7 +577,9 @@ public partial class TerminalControlWindow : Window
             var config = _runtime.ConfigService.LoadOrCreate();
             config.Terminal.SerialSshBridge.PortOverrides[target.PortKey] = port;
             _runtime.SaveConfig(config);
-            BridgeStatusTextBlock.Text = $"已保存 {target.Label} 的共享端口: {config.Terminal.SerialSshBridge.BindHost}:{port}";
+            var usernameHint = string.IsNullOrWhiteSpace(config.Terminal.SerialSshBridge.Username) ? "任意用户名" : config.Terminal.SerialSshBridge.Username;
+            var passwordHint = string.IsNullOrEmpty(config.Terminal.SerialSshBridge.Password) ? "空密码" : "已配置密码";
+            BridgeStatusTextBlock.Text = $"已保存 {target.Label} 的共享端口: {config.Terminal.SerialSshBridge.BindHost}:{port}，账号: {usernameHint}，认证: {passwordHint}";
             SetWindowStatus($"已保存串口共享端口：{target.Label} -> {port}", isMuted: true);
             RefreshBridgeTargets(target.PortKey);
         }

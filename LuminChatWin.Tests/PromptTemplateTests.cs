@@ -18,17 +18,18 @@ public sealed class PromptTemplateTests
     }
 
     [Fact]
-    public void PromptTemplateService_LoadsTemplateFromLibraryFile()
+    public void PromptTemplateService_LoadsDefaultSystemPromptAndAppendsInlineText()
     {
         var root = Path.Combine(Path.GetTempPath(), "LuminChatWinTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        File.WriteAllText(Path.Combine(root, "system.md"), "这是外部系统提示词。");
+        File.WriteAllText(Path.Combine(root, "default-system.md"), "这是外部系统提示词。");
         var config = AppConfig.CreateDefault();
         config.Prompts.PromptLibraryDir = root;
-        config.Prompts.SelectedSystemPromptFile = "system.md";
+        config.Prompts.SystemPromptTemplate = "这是追加说明。";
 
         var result = PromptTemplateService.ResolveSystemPromptTemplate(config);
 
-        Assert.Equal("这是外部系统提示词。", result);
+        Assert.Contains("这是外部系统提示词。", result);
+        Assert.Contains("这是追加说明。", result);
     }
 }

@@ -234,10 +234,10 @@ public sealed class TerminalSerialBridgeConfig
     public string PortPrefix { get; set; } = "22";
 
     [JsonPropertyName("username")]
-    public string Username { get; set; } = "root";
+    public string Username { get; set; } = string.Empty;
 
     [JsonPropertyName("password")]
-    public string Password { get; set; } = "root";
+    public string Password { get; set; } = string.Empty;
 
     [JsonPropertyName("exec_timeout_s")]
     public double ExecTimeoutSeconds { get; set; } = 15;
