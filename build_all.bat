@@ -9,8 +9,9 @@ set DEBUG_SRC=%OUTPUT_DIR%\Debug
 set RELEASE_SRC=%OUTPUT_DIR%\Release
 set FALLBACK_SUFFIX=
 REM NOTE: WPF single-file publish bundles a lot of native runtime bits and can be large (~100+ MB).
+REM This publish targets self-contained so the app can run without .NET installed.
 REM Enabling compression and stripping debug symbols reduces the output size.
-set PUBLISH_ARGS=-r win-x64 --self-contained false -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false
+set PUBLISH_ARGS=-r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false
 
 echo ==================================================
 echo Preparing output directory...
@@ -44,6 +45,16 @@ echo.
 echo [SUCCESS] Published single-file app artifacts to:
 echo   Debug   = %DEBUG_SRC%
 echo   Release = %RELEASE_SRC%
+
+echo.
+echo Creating standalone distribution folder (single EXE only)...
+set DIST_DIR=%OUTPUT_DIR%\dist
+set DIST_RELEASE=%DIST_DIR%\Release
+if not exist "%DIST_RELEASE%" mkdir "%DIST_RELEASE%"
+copy /Y "%RELEASE_SRC%\LuminChatWin.App.exe" "%DIST_RELEASE%\LuminChatWin.App.exe" >nul
+
+echo [SUCCESS] Standalone executable exported to:
+	echo   %DIST_RELEASE%\LuminChatWin.App.exe
 exit /b 0
 
 :error
