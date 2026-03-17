@@ -8,7 +8,9 @@ set OUTPUT_DIR=%ROOT%output
 set DEBUG_SRC=%OUTPUT_DIR%\Debug
 set RELEASE_SRC=%OUTPUT_DIR%\Release
 set FALLBACK_SUFFIX=
-set PUBLISH_ARGS=-r win-x64 --self-contained false -p:PublishSingleFile=true
+REM NOTE: WPF single-file publish bundles a lot of native runtime bits and can be large (~100+ MB).
+REM Enabling compression and stripping debug symbols reduces the output size.
+set PUBLISH_ARGS=-r win-x64 --self-contained false -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false
 
 echo ==================================================
 echo Preparing output directory...
