@@ -12,8 +12,10 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
     private readonly SshServer _server;
     private readonly Func<string, CancellationToken, Task> _sendInputAsync;
     private readonly Func<string, TimeSpan, CancellationToken, Task<TerminalCommandResult>> _executeCommandAsync;
+    private readonly Func<string> _recentOutputAccessor;
     private readonly ConcurrentDictionary<int, ShellConnection> _shells = new();
     private readonly string _sessionId;
+    private readonly string _sessionTitle;
     private readonly string _username;
     private readonly string _password;
     private readonly TimeSpan _execTimeout;
@@ -22,14 +24,18 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
 
     public SerialSshBridgeServer(
         string sessionId,
+        string sessionTitle,
         IPAddress bindAddress,
         int port,
         TerminalSerialBridgeConfig config,
         Func<string, CancellationToken, Task> sendInputAsync,
+        Func<string> recentOutputAccessor,
         Func<string, TimeSpan, CancellationToken, Task<TerminalCommandResult>> executeCommandAsync)
     {
         _sessionId = sessionId;
+        _sessionTitle = sessionTitle;
         _sendInputAsync = sendInputAsync;
+        _recentOutputAccessor = recentOutputAccessor;
         _executeCommandAsync = executeCommandAsync;
         _username = config.Username?.Trim() ?? string.Empty;
         _password = config.Password ?? string.Empty;
@@ -154,7 +160,18 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
         if (!_shells.TryAdd(shellId, shell))
         {
             shell.Dispose();
+            return;
         }
+
+        shell.SendOutput(Encoding.UTF8.GetBytes($"[luminTerminal] Serial SSH bridge attached to {_sessionTitle}\r\n"));
+
+        var snapshot = _recentOutputAccessor();
+        if (!string.IsNullOrWhiteSpace(snapshot))
+        {
+            shell.SendOutput(Encoding.UTF8.GetBytes(snapshot));
+        }
+
+        _ = _sendInputAsync("\n", CancellationToken.None);
     }
 
     private async Task RunExecAsync(SessionChannel channel, string commandText)
@@ -287,7 +304,7 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
                 return;
             }
 
-            _ = _sendInputAsync(Encoding.UTF8.GetString(data), CancellationToken.None);
+            _ = _sendInputAsync(Encoding.Latin1.GetString(data), CancellationToken.None);
         }
 
         private void Channel_CloseReceived(object? sender, EventArgs e)

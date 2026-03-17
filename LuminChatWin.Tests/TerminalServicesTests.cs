@@ -228,10 +228,12 @@ public sealed class TerminalServicesTests
         string? receivedCommand = null;
         await using var bridge = new SerialSshBridgeServer(
             "session-exec",
+            "session-exec",
             IPAddress.Loopback,
             port,
             config,
             (_, _) => Task.CompletedTask,
+            () => string.Empty,
             (commandText, _, _) =>
             {
                 receivedCommand = commandText;
@@ -267,17 +269,24 @@ public sealed class TerminalServicesTests
             Password = "root",
             HostKeyPath = Path.Combine(CreateTempDirectory(), "bridge-shell-hostkey.pem"),
         };
-        var receivedInput = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receivedInput = new List<string>();
+        using var receivedInputSignal = new AutoResetEvent(false);
         await using var bridge = new SerialSshBridgeServer(
             "session-shell",
+            "Demo Serial",
             IPAddress.Loopback,
             port,
             config,
             (text, _) =>
             {
-                receivedInput.TrySetResult(text);
+                lock (receivedInput)
+                {
+                    receivedInput.Add(text);
+                }
+                receivedInputSignal.Set();
                 return Task.CompletedTask;
             },
+            () => "cached-output\r\n",
             (_, _, _) => Task.FromResult(new TerminalCommandResult { Success = true }));
 
         bridge.Start();
@@ -286,9 +295,13 @@ public sealed class TerminalServicesTests
         client.Connect();
         using var stream = client.CreateShellStream("xterm", 80, 24, 800, 600, 1024);
 
+        var initialOutput = ReadUntilContains(stream, "cached-output", TimeSpan.FromSeconds(5));
+        Assert.Contains("Serial SSH bridge attached", initialOutput, StringComparison.Ordinal);
+        Assert.Contains("cached-output", initialOutput, StringComparison.Ordinal);
+
         stream.Write("status\n");
         stream.Flush();
-        var forwardedInput = await receivedInput.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var forwardedInput = WaitForCombinedInput(receivedInput, receivedInputSignal, TimeSpan.FromSeconds(5));
         Assert.Contains("status", forwardedInput, StringComparison.Ordinal);
 
         bridge.HandleTerminalOutput(new TerminalOutputEventArgs
@@ -341,6 +354,29 @@ public sealed class TerminalServicesTests
         }
 
         return buffer.ToString();
+    }
+
+    private static string WaitForCombinedInput(List<string> receivedInput, AutoResetEvent signal, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (receivedInput)
+            {
+                var combined = string.Concat(receivedInput);
+                if (combined.Contains("status", StringComparison.Ordinal))
+                {
+                    return combined;
+                }
+            }
+
+            signal.WaitOne(50);
+        }
+
+        lock (receivedInput)
+        {
+            return string.Concat(receivedInput);
+        }
     }
 
     private sealed class FakeTerminalAgentChatCompletionClient(params LlmResponse[] responses) : IChatCompletionClient

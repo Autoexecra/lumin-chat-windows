@@ -277,10 +277,12 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         var port = requestedPort ?? ResolveBridgePort(session.Info);
         var bridgeServer = new SerialSshBridgeServer(
             sessionId,
+            session.Info.Title,
             bindAddress,
             port,
             config.SerialSshBridge,
             (text, token) => session.Backend.SendAsync(text, token),
+            () => GetRecentRawOutput(sessionId, 16000),
             (commandText, timeout, token) => ExecuteCommandAsync(sessionId, commandText, timeout, token));
 
         var bridgeState = new SerialBridgeState(bridgeServer, sessionId, session);
