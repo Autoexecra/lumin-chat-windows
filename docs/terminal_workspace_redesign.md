@@ -125,8 +125,17 @@ Agent 工作台拆成三个相邻标签：
 - `Agent` 标签默认自动执行，不再保留建议命令框和自动执行复选框
 - `提示模式` 保留建议命令框，用于人工审核和手动执行
 - 发给 LLM 的终端历史直接取当前会话窗口字符串，并截断到最近 10000 个字符
-- 终端 Agent 只开放网页搜索/抓取、资料库、SSH 远程控制这些与串口场景直接相关的工具
+- 终端 Agent 只开放 `run_shell_command`、网页搜索/抓取、资料库、SSH 远程控制这些与串口场景直接相关的工具
 - Agent 过程日志与配置区分离，避免压缩终端和输入区域
+
+### Agent 输出协议
+
+- 终端 Agent 统一按 `thinking / content / tool_calls` 三部分协议工作。
+- `thinking` 通过模型的流式 reasoning 通道实时显示在 `AI过程` 标签。
+- `content` 通过模型正文流式返回，并且必须始终是 JSON：`{"complete":bool,"analysis":string,"final_message":string}`。
+- 如果任务未完成，模型不再把命令写进 JSON，而是通过 `tool_calls` 返回下一步动作。
+- `run_shell_command` 在终端分支里不是执行本机 PowerShell，而是把 `command` 投递到当前选中的终端会话窗口中执行。
+- 自动模式会直接执行 `run_shell_command`；提示模式会把这条 tool call 拦截成建议命令，等待用户确认。
 
 这使 Agent 同时覆盖两种工作流：
 
@@ -158,3 +167,5 @@ Agent 工作台拆成三个相邻标签：
 新增覆盖点：
 
 - `TerminalProfileStore` 的保存、重命名、共享开关和最近使用时间持久化
+- `TerminalAgentService` 的工具白名单、终端 transcript 注入、`run_shell_command` 提示/自动双模式行为
+- `OpenAiCompatibleChatClient` 的流式 reasoning/content 聚合与 tool call 拼装

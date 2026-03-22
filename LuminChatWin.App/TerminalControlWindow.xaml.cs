@@ -1089,6 +1089,24 @@ public partial class TerminalControlWindow : Window
 
     private void AddAgentTimeline(string role, string content)
     {
+        AddAgentTimeline(role, content, appendToPrevious: false);
+    }
+
+    private void AddAgentTimeline(string role, string content, bool appendToPrevious)
+    {
+        // Streamed thinking/content should grow in place instead of creating a new timeline row for every token.
+        if (appendToPrevious && _agentTimeline.Count > 0)
+        {
+            var last = _agentTimeline[^1];
+            if (string.Equals(last.Role, role, StringComparison.Ordinal))
+            {
+                _agentTimeline[^1] = new AgentTimelineItemViewModel(role, last.Content + content, last.TimestampLabel);
+                AgentTimelineListBox.ScrollIntoView(_agentTimeline.LastOrDefault());
+                AgentSummaryTextBlock.Text = $"最近事件: {TrimForSingleLine(_agentTimeline[^1].Content)}";
+                return;
+            }
+        }
+
         _agentTimeline.Add(new AgentTimelineItemViewModel(role, content));
         if (_agentTimeline.Count > 200)
         {
@@ -1111,12 +1129,12 @@ public partial class TerminalControlWindow : Window
             {
                 AgentEventType.ToolCall => $"工具调用 {evt.ToolName}: {evt.Message}",
                 AgentEventType.ToolResult => $"工具结果 {evt.ToolName}: {evt.Message}",
-                AgentEventType.Reasoning => $"推理: {evt.Message}",
+                AgentEventType.Reasoning => evt.Message,
                 AgentEventType.Content => evt.Message,
                 _ => evt.Message,
             };
 
-            AddAgentTimeline(evt.Type is AgentEventType.Reasoning or AgentEventType.Content ? "agent" : "system", content);
+            AddAgentTimeline(evt.Type is AgentEventType.Reasoning or AgentEventType.Content ? "agent" : "system", content, evt.AppendToPrevious);
         });
     }
 
@@ -1552,10 +1570,15 @@ public partial class TerminalControlWindow : Window
     private sealed class AgentTimelineItemViewModel
     {
         public AgentTimelineItemViewModel(string role, string content)
+            : this(role, content, DateTime.Now.ToString("HH:mm:ss"))
+        {
+        }
+
+        public AgentTimelineItemViewModel(string role, string content, string timestampLabel)
         {
             Role = role;
             Content = content;
-            TimestampLabel = DateTime.Now.ToString("HH:mm:ss");
+            TimestampLabel = timestampLabel;
         }
 
         public string Role { get; }

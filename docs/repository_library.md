@@ -25,9 +25,49 @@
 
 - 远端根目录：`knowledge_base.root_dir`
 - 本地缓存目录：`knowledge_base.local_cache_dir`
+- SSH 地址：`knowledge_base.host` / `knowledge_base.port`
+- SSH 账号：`knowledge_base.username` / `knowledge_base.password`
 - 调试界面名称统一显示为“资料库”，配置文件字段仍兼容 `knowledge_base`
+
+与本轮终端 Agent 联动最强的配置项还有：
+
+- `log.debug_mode.enabled`：是否启用调试日志落盘
+- `log.debug_mode.show_llm_prompts`：记录发送给 LLM 的请求体
+- `log.debug_mode.show_llm_responses`：记录 LLM 返回内容
+- `log.debug_mode.log_dir`：请求/响应日志目录
+
+配置示例：
+
+```json
+{
+	"knowledge_base": {
+		"enabled": true,
+		"host": "192.168.0.10",
+		"port": 22,
+		"username": "root",
+		"password": "",
+		"root_dir": "/root/docs",
+		"local_cache_dir": "~/.lumin-chat-win/knowledge-cache",
+		"patterns": ["*.md", "*.txt"]
+	},
+	"log": {
+		"debug_mode": {
+			"enabled": true,
+			"show_llm_prompts": true,
+			"show_llm_responses": true,
+			"log_dir": "~/.lumin-chat-win/logs/llm-debug"
+		}
+	}
+}
+```
 
 ## 调试
 
 - 综合设置里提供“测试资料库连接”按钮，用于验证 SSH 连通性和目录可读性。
 - 如果启用 LLM 调试日志，资料相关的提示词和模型返回也会一起落盘，方便排查模型是否真的先查资料后决策。
+
+## 与 Agent 的关系
+
+- 终端 Agent 在检测到资料库已启用后，会先调用 `list_knowledge_documents` 枚举候选资料。
+- 模型挑中目标文档后，再通过 `read_knowledge_document` 读取需要的片段。
+- 如果任务还没完成，后续动作通过 `tool_calls` 返回；真正下发到终端窗口的命令统一使用 `run_shell_command`。

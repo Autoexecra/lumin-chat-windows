@@ -8,6 +8,7 @@ public sealed class TerminalAgentService
 {
     private static readonly HashSet<string> AllowedToolNames =
     [
+        "run_shell_command",
         "ssh_execute_command",
         "ssh_list_directory",
         "ssh_read_file",
@@ -52,7 +53,7 @@ public sealed class TerminalAgentService
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new AgentEvent { Type = AgentEventType.Info, Message = $"第 {round + 1} 轮规划开始。" });
 
-            var turn = await PlanTurnAsync(session, objective, dialogue, modelLevel, executor, progress, cancellationToken).ConfigureAwait(false);
+            var turn = await PlanTurnAsync(session, objective, dialogue, modelLevel, mode, executor, progress, cancellationToken).ConfigureAwait(false);
             if (!turn.Success)
             {
                 return turn;
@@ -148,6 +149,7 @@ public sealed class TerminalAgentService
         string objective,
         IList<TerminalAgentDialogueItem> dialogue,
         int modelLevel,
+        TerminalAgentMode mode,
         ToolExecutor executor,
         IProgress<AgentEvent>? progress,
         CancellationToken cancellationToken)
@@ -169,7 +171,34 @@ public sealed class TerminalAgentService
 
         while (true)
         {
-            var response = await _chatClient.CompleteAsync(config, modelLevel, messages, FilterDefinitions(executor.Definitions()), cancellationToken).ConfigureAwait(false);
+            var reasoningStreamStarted = false;
+            var contentStreamStarted = false;
+            var response = await _chatClient.CompleteStreamingAsync(
+                config,
+                modelLevel,
+                messages,
+                BuildTerminalDefinitions(executor.Definitions()),
+                onReasoningChunk: chunk =>
+                {
+                    progress?.Report(new AgentEvent
+                    {
+                        Type = AgentEventType.Reasoning,
+                        Message = reasoningStreamStarted ? chunk : $"thinking: {chunk}",
+                        AppendToPrevious = reasoningStreamStarted,
+                    });
+                    reasoningStreamStarted = true;
+                },
+                onContentChunk: chunk =>
+                {
+                    progress?.Report(new AgentEvent
+                    {
+                        Type = AgentEventType.Content,
+                        Message = contentStreamStarted ? chunk : $"content: {chunk}",
+                        AppendToPrevious = contentStreamStarted,
+                    });
+                    contentStreamStarted = true;
+                },
+                cancellationToken).ConfigureAwait(false);
             if (!response.Success)
             {
                 return new TerminalAgentPlan
@@ -180,14 +209,15 @@ public sealed class TerminalAgentService
                 };
             }
 
-            if (!string.IsNullOrWhiteSpace(response.ReasoningContent))
+            var contentPlan = ParsePlan(response.Content, allowEmptyContent: response.ToolCalls.Count > 0);
+            if (!contentPlan.Success)
             {
-                progress?.Report(new AgentEvent { Type = AgentEventType.Reasoning, Message = response.ReasoningContent });
+                return contentPlan;
             }
 
             if (response.ToolCalls.Count == 0)
             {
-                return ParsePlan(response.Content);
+                return contentPlan;
             }
 
             messages.Add(BuildAssistantToolCallMessage(response));
@@ -201,9 +231,65 @@ public sealed class TerminalAgentService
                     Message = JsonSerializer.Serialize(toolCall.Arguments),
                 });
 
-                var result = AllowedToolNames.Contains(toolCall.Name)
-                    ? await executor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false)
-                    : new ToolExecutionResult(toolCall.Name, false, "该工具未对终端 Agent 开放。");
+                if (!AllowedToolNames.Contains(toolCall.Name))
+                {
+                    var blocked = new ToolExecutionResult(toolCall.Name, false, "该工具未对终端 Agent 开放。");
+                    progress?.Report(new AgentEvent
+                    {
+                        Type = AgentEventType.ToolResult,
+                        ToolName = toolCall.Name,
+                        ToolResult = blocked,
+                        Message = blocked.Output,
+                    });
+
+                    messages.Add(new PersistedChatMessage
+                    {
+                        Role = "tool",
+                        ToolCallId = toolCall.Id,
+                        Name = toolCall.Name,
+                        Content = blocked.Output,
+                    });
+                    continue;
+                }
+
+                // In prompt mode, run_shell_command becomes a suggestion instead of executing immediately.
+                if (string.Equals(toolCall.Name, "run_shell_command", StringComparison.Ordinal))
+                {
+                    var command = GetRequiredString(toolCall.Arguments, "command");
+                    if (mode == TerminalAgentMode.Prompt)
+                    {
+                        return new TerminalAgentPlan
+                        {
+                            Success = contentPlan.Success,
+                            Completed = contentPlan.Completed,
+                            Analysis = contentPlan.Analysis,
+                            SuggestedCommand = command,
+                            NeedInput = false,
+                            FinalMessage = contentPlan.FinalMessage,
+                            RawResponse = response.Content,
+                        };
+                    }
+
+                    var commandResult = await ExecuteTerminalCommandToolAsync(session.SessionId, toolCall.Arguments, config, cancellationToken).ConfigureAwait(false);
+                    progress?.Report(new AgentEvent
+                    {
+                        Type = AgentEventType.ToolResult,
+                        ToolName = toolCall.Name,
+                        ToolResult = commandResult,
+                        Message = commandResult.Output,
+                    });
+
+                    messages.Add(new PersistedChatMessage
+                    {
+                        Role = "tool",
+                        ToolCallId = toolCall.Id,
+                        Name = toolCall.Name,
+                        Content = commandResult.Output,
+                    });
+                    continue;
+                }
+
+                var result = await executor.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
 
                 progress?.Report(new AgentEvent
                 {
@@ -240,19 +326,25 @@ public sealed class TerminalAgentService
     {
         var builder = new StringBuilder();
         builder.AppendLine("你是串口终端执行代理。目标是控制当前终端会话，持续规划直到任务完成。")
-            .AppendLine("你的职责是：先分析当前终端窗口内容，再决定下一条终端命令，会生成的指令是放到串口终端或者 ssh 终端去执行的。必要时使用远程资料工具补充上下文。")
+            .AppendLine("你的职责是：根据用户提出的执行需求。先分析当前终端窗口内容，再决定下一条终端命令，生成的指令会放到当前会话窗口中执行，当前会话窗口可能是串口终端或者ssh终端。执行前会调用资料库或者网页搜索相关资料。")
             .AppendLine()
             .AppendLine("强约束:")
             .AppendLine("- 当前终端是主要执行面，不要调用本机文件、git、本机 shell 等无关工具。")
-            .AppendLine("- 只允许使用以下工具: ssh_execute_command、ssh_list_directory、ssh_read_file、ssh_write_file、fetch_web_page、search_web、list_knowledge_documents、read_knowledge_document、write_knowledge_document。")
-            .AppendLine("- 如果任务已经完成，必须返回 complete=true，并给出 final_message。")
-            .AppendLine("- 如果需要继续在当前终端执行命令，返回 command。")
+            .AppendLine("- 只允许使用以下工具: run_shell_command、ssh_execute_command、ssh_list_directory、ssh_read_file、ssh_write_file、fetch_web_page、search_web、list_knowledge_documents、read_knowledge_document、write_knowledge_document。")
+            .AppendLine("- run_shell_command 不是在本机 PowerShell 执行，而是把 command 放到当前终端会话窗口中执行。")
+            .AppendLine("- thinking 通过流式 reasoning 输出，content 通过流式正文输出。不要把 thinking 写进 content JSON。")
+            .AppendLine("- 不要在正文里输出 thinking、content、tool_calls 这三个字面标签；thinking 走 reasoning 通道，content 只输出 JSON，tool_calls 只走工具调用字段。")
+            .AppendLine("- content 必须始终是 JSON，并且只能包含这些字段: {\"complete\":bool,\"analysis\":string,\"final_message\":string}。")
+            .AppendLine("- 如果任务已经完成，返回 complete=true，并给出 final_message，不要再返回 tool_calls。")
+            .AppendLine("- 如果任务还没完成，不要在 JSON 里返回 command；需要执行命令时调用 run_shell_command。")
+            .AppendLine("- 如果需要继续查资料或远程取证，也通过 tool_calls 返回。")
             .AppendLine("- 不要把解释性文本放在 JSON 外面。")
             .AppendLine("- 禁止使用交互式的指令，比如 vim、nano、less、more 等。dnf install 必须加上 -y 参数。docker指令使用docker exec my_container sh -c '指令' 而不是 docker exec -it进入容器内。并且输出不能分页。")
             .AppendLine("- 输出尽量使用grep、awk、sed等工具过滤和处理，避免输出过多无关信息。")
             .AppendLine("- 如果资料库启用且可用，先调用 list_knowledge_documents 列出资料，再挑选最相关的文件调用 read_knowledge_document 读取。")
             .AppendLine("- 已读取的资料内容会在当前会话的后续轮次继续发送给模型，因此不要重复读取相同资料，除非确有必要。")
-            .AppendLine("输出必须是 JSON: {\"analysis\":string,\"command\":string,\"complete\":bool,\"need_input\":bool,\"final_message\":string}")
+            .AppendLine("- 如果当前信息不足且无法继续，请返回 complete=false，并在 final_message 中明确说明需要用户补充什么。")
+            .AppendLine("输出协议固定为 three-part: thinking, content, tool_calls。其中 thinking 可为空，content 必须是上述 JSON，tool_calls 只在未完成时返回。")
             .AppendLine();
 
         if (config.SecondaryServer.Enabled)
@@ -293,9 +385,9 @@ public sealed class TerminalAgentService
         return builder.ToString();
     }
 
-    private static IReadOnlyList<Dictionary<string, object?>> FilterDefinitions(IReadOnlyList<Dictionary<string, object?>> definitions)
+    private static IReadOnlyList<Dictionary<string, object?>> BuildTerminalDefinitions(IReadOnlyList<Dictionary<string, object?>> definitions)
     {
-        return definitions
+        var filtered = definitions
             .Where(definition =>
             {
                 if (!definition.TryGetValue("function", out var functionObject) || functionObject is not Dictionary<string, object?> function)
@@ -305,7 +397,26 @@ public sealed class TerminalAgentService
 
                 return function.TryGetValue("name", out var nameObject) && nameObject is string name && AllowedToolNames.Contains(name);
             })
+            .Select(CloneDefinition)
             .ToList();
+
+        var runShellDefinition = filtered.FirstOrDefault(definition =>
+            definition.TryGetValue("function", out var functionObject) &&
+            functionObject is Dictionary<string, object?> function &&
+            function.TryGetValue("name", out var nameObject) &&
+            string.Equals(nameObject?.ToString(), "run_shell_command", StringComparison.Ordinal));
+
+        if (runShellDefinition is not null &&
+            runShellDefinition["function"] is Dictionary<string, object?> runShellFunction &&
+            runShellFunction["parameters"] is Dictionary<string, object?> parameters &&
+            parameters["properties"] is Dictionary<string, object?> properties)
+        {
+            // The terminal agent only needs command text and timeout because execution always targets the selected terminal session.
+            runShellFunction["description"] = "Send a command to the current terminal session window for execution inside the app.";
+            properties.Remove("cwd");
+        }
+
+        return filtered;
     }
 
     private static PersistedChatMessage BuildAssistantToolCallMessage(LlmResponse response)
@@ -327,21 +438,36 @@ public sealed class TerminalAgentService
         };
     }
 
-    private static TerminalAgentPlan ParsePlan(string raw)
+    private static TerminalAgentPlan ParsePlan(string raw, bool allowEmptyContent = false)
     {
         try
         {
+            if (allowEmptyContent && string.IsNullOrWhiteSpace(raw))
+            {
+                return new TerminalAgentPlan
+                {
+                    Success = true,
+                    Completed = false,
+                    NeedInput = false,
+                    RawResponse = raw,
+                };
+            }
+
             var json = ExtractJson(raw);
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            var complete = root.TryGetProperty("complete", out var completeElement) && completeElement.ValueKind == JsonValueKind.True;
+            var needInput = root.TryGetProperty("need_input", out var needInputElement) && needInputElement.ValueKind == JsonValueKind.True;
+            var command = root.TryGetProperty("command", out var commandElement) ? commandElement.GetString() ?? string.Empty : string.Empty;
+            var finalMessage = root.TryGetProperty("final_message", out var finalMessageElement) ? finalMessageElement.GetString() ?? string.Empty : string.Empty;
             return new TerminalAgentPlan
             {
                 Success = true,
-                Completed = root.TryGetProperty("complete", out var completeElement) && completeElement.ValueKind == JsonValueKind.True,
-                NeedInput = root.TryGetProperty("need_input", out var needInputElement) && needInputElement.ValueKind == JsonValueKind.True,
+                Completed = complete,
+                NeedInput = needInput || (!complete && string.IsNullOrWhiteSpace(command) && string.IsNullOrWhiteSpace(finalMessage)),
                 Analysis = root.TryGetProperty("analysis", out var analysis) ? analysis.GetString() ?? string.Empty : string.Empty,
-                SuggestedCommand = root.TryGetProperty("command", out var command) ? command.GetString() ?? string.Empty : string.Empty,
-                FinalMessage = root.TryGetProperty("final_message", out var finalMessage) ? finalMessage.GetString() ?? string.Empty : string.Empty,
+                SuggestedCommand = command,
+                FinalMessage = finalMessage,
                 RawResponse = raw,
             };
         }
@@ -376,5 +502,70 @@ public sealed class TerminalAgentService
     {
         var output = string.IsNullOrWhiteSpace(result.Output) ? "<empty>" : result.Output;
         return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
+    }
+
+    private async Task<ToolExecutionResult> ExecuteTerminalCommandToolAsync(string sessionId, IReadOnlyDictionary<string, object?> arguments, AppConfig config, CancellationToken cancellationToken)
+    {
+        var command = GetRequiredString(arguments, "command");
+        var timeoutSeconds = GetInt(arguments, "timeout_seconds", Math.Max(3, (int)Math.Ceiling(config.Terminal.ExecApi.DefaultTimeoutSeconds)));
+
+        // Route run_shell_command into the active terminal session instead of the local PowerShell workspace.
+        var result = await _sessionManager.ExecuteCommandAsync(
+            sessionId,
+            command,
+            TimeSpan.FromSeconds(Math.Max(3, timeoutSeconds)),
+            cancellationToken).ConfigureAwait(false);
+
+        return new ToolExecutionResult("run_shell_command", result.Success, JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["command"] = result.Command,
+            ["success"] = result.Success,
+            ["timed_out"] = result.TimedOut,
+            ["output"] = result.Output,
+            ["error"] = result.Error,
+        }));
+    }
+
+    private static string GetRequiredString(IReadOnlyDictionary<string, object?> arguments, string key)
+    {
+        if (!arguments.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value?.ToString()))
+        {
+            throw new InvalidOperationException($"缺少必填参数: {key}");
+        }
+
+        return value!.ToString()!;
+    }
+
+    private static int GetInt(IReadOnlyDictionary<string, object?> arguments, string key, int defaultValue)
+    {
+        if (!arguments.TryGetValue(key, out var value) || value is null)
+        {
+            return defaultValue;
+        }
+
+        return value switch
+        {
+            int intValue => intValue,
+            long longValue => (int)longValue,
+            JsonElement { ValueKind: JsonValueKind.Number } jsonNumber when jsonNumber.TryGetInt32(out var parsed) => parsed,
+            _ when int.TryParse(value.ToString(), out var parsed) => parsed,
+            _ => defaultValue,
+        };
+    }
+
+    private static Dictionary<string, object?> CloneDefinition(Dictionary<string, object?> definition)
+    {
+        var clone = new Dictionary<string, object?>(definition.Count, StringComparer.Ordinal);
+        foreach (var pair in definition)
+        {
+            clone[pair.Key] = pair.Value switch
+            {
+                Dictionary<string, object?> dictionary => CloneDefinition(dictionary),
+                List<object?> list => list.ToList(),
+                _ => pair.Value,
+            };
+        }
+
+        return clone;
     }
 }

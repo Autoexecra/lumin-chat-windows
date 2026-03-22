@@ -114,6 +114,7 @@ public sealed class AgentEvent
     public string? ToolName { get; init; }
     public Dictionary<string, object?>? Arguments { get; init; }
     public ToolExecutionResult? ToolResult { get; init; }
+    public bool AppendToPrevious { get; init; }
 }
 
 public sealed class LicenseValidationResult

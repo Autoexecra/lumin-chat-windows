@@ -82,6 +82,30 @@ public sealed class ChatAgentTests
                 Assert.Equal("hello", response.Content);
         }
 
+        [Fact]
+        public void OpenAiCompatibleChatClient_ParseChoicesResponse_NormalizesThreePartContentLabels()
+        {
+                using var document = JsonDocument.Parse("""
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "thinking\n先分析当前终端状态。\ncontent\n{\"complete\":false,\"analysis\":\"继续执行\",\"final_message\":\"\"}\ntool_calls\n"
+                            },
+                            "finish_reason": "tool_calls"
+                        }
+                    ]
+                }
+                """);
+
+                var ok = OpenAiCompatibleChatClient.TryParseChoicesResponse(document.RootElement, out var response);
+
+                Assert.True(ok);
+                Assert.True(response.Success);
+                Assert.Contains("先分析当前终端状态", response.ReasoningContent, StringComparison.Ordinal);
+                Assert.Equal("{\"complete\":false,\"analysis\":\"继续执行\",\"final_message\":\"\"}", response.Content);
+        }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "LuminChatWinTests", Guid.NewGuid().ToString("N"));
@@ -96,6 +120,22 @@ public sealed class ChatAgentTests
         public Task<LlmResponse> CompleteAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "" });
+        }
+
+        public Task<LlmResponse> CompleteStreamingAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, Action<string>? onReasoningChunk = null, Action<string>? onContentChunk = null, CancellationToken cancellationToken = default)
+        {
+            var response = _responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = string.Empty };
+            if (!string.IsNullOrWhiteSpace(response.ReasoningContent))
+            {
+                onReasoningChunk?.Invoke(response.ReasoningContent);
+            }
+
+            if (!string.IsNullOrWhiteSpace(response.Content))
+            {
+                onContentChunk?.Invoke(response.Content);
+            }
+
+            return Task.FromResult(response);
         }
     }
 }

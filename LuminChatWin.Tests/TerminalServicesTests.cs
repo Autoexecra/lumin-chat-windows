@@ -142,29 +142,47 @@ public sealed class TerminalServicesTests
 
         try
         {
+            var events = new List<AgentEvent>();
             var client = new FakeTerminalAgentChatCompletionClient(
                 new LlmResponse
                 {
                     Success = true,
+                    ReasoningContent = "先确认终端状态。",
                     Content = """
-                    {"analysis":"先打印标记。","command":"Write-Output 'agent-loop-ok'","complete":false,"need_input":false,"final_message":""}
+                    {"analysis":"先打印标记。","complete":false,"final_message":""}
                     """,
+                    ToolCalls =
+                    [
+                        new ToolCall("call-1", "run_shell_command", new Dictionary<string, object?>
+                        {
+                            ["command"] = "Write-Output 'agent-loop-ok'",
+                        }),
+                    ],
                 },
                 new LlmResponse
                 {
                     Success = true,
                     Content = """
-                    {"analysis":"输出已出现。","command":"","complete":true,"need_input":false,"final_message":"任务完成"}
+                    {"analysis":"输出已出现。","complete":true,"final_message":"任务完成"}
                     """,
                 });
             var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
             var dialogue = new List<TerminalAgentDialogueItem>();
 
-            var result = await service.RunLoopAsync(session.SessionId, "打印一个标记并确认完成", dialogue, "auto", TerminalAgentMode.Auto);
+            var result = await service.RunLoopAsync(
+                session.SessionId,
+                "打印一个标记并确认完成",
+                dialogue,
+                "auto",
+                TerminalAgentMode.Auto,
+                new Progress<AgentEvent>(evt => events.Add(evt)));
 
             Assert.True(result.Success);
             Assert.True(result.Completed);
             Assert.Equal("任务完成", result.FinalMessage);
+            Assert.Contains(events, static evt => evt.Type == AgentEventType.Reasoning && evt.Message.Contains("thinking:", StringComparison.Ordinal));
+            Assert.Contains(events, static evt => evt.Type == AgentEventType.Content && evt.Message.Contains("content:", StringComparison.Ordinal));
+            Assert.Contains(events, static evt => evt.Type == AgentEventType.ToolCall && string.Equals(evt.ToolName, "run_shell_command", StringComparison.Ordinal));
             var output = manager.GetRecentOutput(session.SessionId, 4000);
             Assert.Contains("agent-loop-ok", output, StringComparison.OrdinalIgnoreCase);
         }
@@ -195,8 +213,15 @@ public sealed class TerminalServicesTests
                 {
                     Success = true,
                     Content = """
-                    {"analysis":"建议先读取版本。","command":"Write-Output 'prompt-only'","complete":false,"need_input":false,"final_message":""}
+                    {"analysis":"建议先读取版本。","complete":false,"final_message":""}
                     """,
+                    ToolCalls =
+                    [
+                        new ToolCall("call-1", "run_shell_command", new Dictionary<string, object?>
+                        {
+                            ["command"] = "Write-Output 'prompt-only'",
+                        }),
+                    ],
                 });
             var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
             var dialogue = new List<TerminalAgentDialogueItem>();
@@ -248,6 +273,7 @@ public sealed class TerminalServicesTests
                     "fetch_web_page",
                     "list_knowledge_documents",
                     "read_knowledge_document",
+                    "run_shell_command",
                     "search_web",
                     "ssh_execute_command",
                     "ssh_list_directory",
@@ -500,6 +526,22 @@ public sealed class TerminalServicesTests
         {
             return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"command\":\"\",\"complete\":true,\"need_input\":false,\"final_message\":\"\"}" });
         }
+
+        public Task<LlmResponse> CompleteStreamingAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, Action<string>? onReasoningChunk = null, Action<string>? onContentChunk = null, CancellationToken cancellationToken = default)
+        {
+            var response = _responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"complete\":true,\"final_message\":\"\"}" };
+            if (!string.IsNullOrWhiteSpace(response.ReasoningContent))
+            {
+                onReasoningChunk?.Invoke(response.ReasoningContent);
+            }
+
+            if (!string.IsNullOrWhiteSpace(response.Content))
+            {
+                onContentChunk?.Invoke(response.Content);
+            }
+
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class CapturingTerminalAgentChatCompletionClient(params LlmResponse[] responses) : IChatCompletionClient
@@ -518,6 +560,27 @@ public sealed class TerminalServicesTests
                 .ToArray() ?? [];
             LastUserPrompt = messages.LastOrDefault(static item => item.Role == "user")?.Content ?? string.Empty;
             return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"command\":\"\",\"complete\":true,\"need_input\":false,\"final_message\":\"\"}" });
+        }
+
+        public Task<LlmResponse> CompleteStreamingAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, Action<string>? onReasoningChunk = null, Action<string>? onContentChunk = null, CancellationToken cancellationToken = default)
+        {
+            LastToolNames = tools?
+                .Select(static tool => tool.TryGetValue("function", out var functionObject) && functionObject is Dictionary<string, object?> function && function.TryGetValue("name", out var nameObject) ? nameObject?.ToString() ?? string.Empty : string.Empty)
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .ToArray() ?? [];
+            LastUserPrompt = messages.LastOrDefault(static item => item.Role == "user")?.Content ?? string.Empty;
+            var response = _responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"complete\":true,\"final_message\":\"\"}" };
+            if (!string.IsNullOrWhiteSpace(response.ReasoningContent))
+            {
+                onReasoningChunk?.Invoke(response.ReasoningContent);
+            }
+
+            if (!string.IsNullOrWhiteSpace(response.Content))
+            {
+                onContentChunk?.Invoke(response.Content);
+            }
+
+            return Task.FromResult(response);
         }
     }
 }

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using LuminChatWin.Core.Models;
 
 namespace LuminChatWin.Core.Services;
@@ -14,7 +15,12 @@ internal static class LlmDebugLogger
             return;
         }
 
-        WriteEntry(config, modelLevel, "request", $"Endpoint: {endpoint}\r\n\r\n{requestBody}");
+        WriteEntry(config, modelLevel, "request", new StringBuilder()
+            .AppendLine($"Endpoint: {endpoint}")
+            .AppendLine()
+            .AppendLine("Request JSON:")
+            .AppendLine(PrettyJsonOrText(requestBody))
+            .ToString());
     }
 
     public static void LogResponse(AppConfig config, int modelLevel, string responseBody, bool success)
@@ -24,7 +30,7 @@ internal static class LlmDebugLogger
             return;
         }
 
-        WriteEntry(config, modelLevel, success ? "response" : "error", responseBody);
+        WriteEntry(config, modelLevel, success ? "response" : "error", PrettyJsonOrText(responseBody));
     }
 
     private static void WriteEntry(AppConfig config, int modelLevel, string kind, string content)
@@ -48,6 +54,27 @@ internal static class LlmDebugLogger
         }
         catch
         {
+        }
+    }
+
+    private static string PrettyJsonOrText(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+            });
+        }
+        catch
+        {
+            return content;
         }
     }
 }
