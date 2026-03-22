@@ -16,10 +16,14 @@ public sealed class AnsiTerminalBox : RichTextBox
     public AnsiTerminalBox()
     {
         IsReadOnly = true;
+        IsReadOnlyCaretVisible = true;
         IsUndoEnabled = false;
+        Focusable = true;
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
         Document = TerminalAnsiRenderer.Render(string.Empty);
+        PreviewMouseDown += OnPreviewMouseDown;
+        GotKeyboardFocus += OnGotKeyboardFocus;
     }
 
     public string AnsiText
@@ -47,11 +51,41 @@ public sealed class AnsiTerminalBox : RichTextBox
         {
             _updatingDocument = true;
             Document = TerminalAnsiRenderer.Render(text);
+            PlaceCaretAtEnd();
             ScrollToEnd();
         }
         finally
         {
             _updatingDocument = false;
         }
+    }
+
+    public void FocusTerminalInput()
+    {
+        Focus();
+        PlaceCaretAtEnd();
+        ScrollToEnd();
+    }
+
+    private void OnPreviewMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        FocusTerminalInput();
+    }
+
+    private void OnGotKeyboardFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        PlaceCaretAtEnd();
+    }
+
+    private void PlaceCaretAtEnd()
+    {
+        var end = Document?.ContentEnd;
+        if (end is null)
+        {
+            return;
+        }
+
+        Selection.Select(end, end);
+        CaretPosition = end;
     }
 }

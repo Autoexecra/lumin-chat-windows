@@ -14,6 +14,8 @@ namespace LuminChatWin.App;
 
 public partial class TerminalControlWindow : Window
 {
+    private const double ExpandedNavigationPaneWidth = 260;
+    private const double CollapsedNavigationPaneWidth = 76;
     private readonly AppRuntime _runtime;
     private readonly ObservableCollection<TerminalProfileViewModel> _profiles = [];
     private readonly ObservableCollection<OpenTerminalSessionViewModel> _openSessions = [];
@@ -25,6 +27,7 @@ public partial class TerminalControlWindow : Window
     private string? _loadedProfileId;
     private TerminalSessionKind? _loadedProfileKind;
     private bool _agentBusy;
+    private double _lastExpandedNavigationPaneWidth = ExpandedNavigationPaneWidth;
 
     public TerminalControlWindow(AppRuntime runtime)
     {
@@ -60,6 +63,7 @@ public partial class TerminalControlWindow : Window
         AgentSummaryTextBlock.Text = "未开始执行。选择目标会话、模型和需求后发送给 Agent。";
         PromptStatusTextBlock.Text = "Ready";
         PromptSummaryTextBlock.Text = "未开始执行。生成建议命令后手动执行。";
+        NavigationPaneColumn.Width = new GridLength(ExpandedNavigationPaneWidth);
         SetWindowStatus("终端工作台已就绪。焦点进入终端正文后可直接输入。", isMuted: true);
     }
 
@@ -641,13 +645,14 @@ public partial class TerminalControlWindow : Window
 
         RefreshSessionSummary();
         RefreshAgentTargets();
+        FocusSelectedTerminalViewport();
     }
 
     private void TerminalViewport_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is RichTextBox textBox)
+        if (sender is AnsiTerminalBox terminalBox)
         {
-            textBox.ScrollToEnd();
+            terminalBox.FocusTerminalInput();
         }
     }
 
@@ -708,28 +713,7 @@ public partial class TerminalControlWindow : Window
             return;
         }
 
-        if (Keyboard.Modifiers != ModifierKeys.None)
-        {
-            return;
-        }
-
-        var payload = e.Key switch
-        {
-            Key.Enter => "\n",
-            Key.Back => "\x7f",
-            Key.Tab => "\t",
-            Key.Up => "\x1b[A",
-            Key.Down => "\x1b[B",
-            Key.Right => "\x1b[C",
-            Key.Left => "\x1b[D",
-            Key.Home => "\x1b[H",
-            Key.End => "\x1b[F",
-            Key.Insert => "\x1b[2~",
-            Key.Delete => "\x1b[3~",
-            Key.PageUp => "\x1b[5~",
-            Key.PageDown => "\x1b[6~",
-            _ => null,
-        };
+        var payload = TryMapTerminalKey(e.Key, Keyboard.Modifiers);
 
         if (payload is null)
         {
@@ -738,6 +722,17 @@ public partial class TerminalControlWindow : Window
 
         e.Handled = true;
         await SendTerminalInputAsync(session.SessionId, payload);
+    }
+
+    private void NavigationTabControl_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<TabItem>(e.OriginalSource as DependencyObject) is null)
+        {
+            return;
+        }
+
+        ToggleNavigationPane();
+        e.Handled = true;
     }
 
     private async Task SendTerminalInputAsync(string sessionId, string text)
@@ -868,6 +863,7 @@ public partial class TerminalControlWindow : Window
             RefreshAgentTargets(session.SessionId);
             RefreshApiSummary();
             RefreshBridgeTargets();
+            FocusSelectedTerminalViewport();
             SetWindowStatus($"已打开会话：{profile.Title}", isMuted: false);
         }
         catch (Exception ex)
@@ -919,6 +915,7 @@ public partial class TerminalControlWindow : Window
         EmptySessionsBorder.Visibility = _openSessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RefreshSessionSummary();
         RefreshBridgeTargets();
+        FocusSelectedTerminalViewport();
     }
 
     private void RefreshAgentTargets(string? preferredSessionId = null)
@@ -1345,11 +1342,111 @@ public partial class TerminalControlWindow : Window
         return text switch
         {
             "\n" => "Enter",
+            " " => "Space",
             "\t" => "Tab",
             "\x7f" => "Backspace",
             "\u0003" => "Ctrl+C",
             _ => TrimForSingleLine(text),
         };
+    }
+
+    private string? TryMapTerminalKey(Key key, ModifierKeys modifiers)
+    {
+        if (modifiers != ModifierKeys.None)
+        {
+            return null;
+        }
+
+        return key switch
+        {
+            Key.Space => " ",
+            Key.Enter => "\n",
+            Key.Back => "\x7f",
+            Key.Tab => "\t",
+            Key.Up => "\x1b[A",
+            Key.Down => "\x1b[B",
+            Key.Right => "\x1b[C",
+            Key.Left => "\x1b[D",
+            Key.Home => "\x1b[H",
+            Key.End => "\x1b[F",
+            Key.Insert => "\x1b[2~",
+            Key.Delete => "\x1b[3~",
+            Key.PageUp => "\x1b[5~",
+            Key.PageDown => "\x1b[6~",
+            _ => null,
+        };
+    }
+
+    private void ToggleNavigationPane()
+    {
+        if (NavigationPaneColumn.Width.Value <= CollapsedNavigationPaneWidth + 0.5d)
+        {
+            NavigationPaneColumn.Width = new GridLength(Math.Max(ExpandedNavigationPaneWidth, _lastExpandedNavigationPaneWidth));
+            NavigationSplitter.Width = 12;
+            NavigationSplitter.Visibility = Visibility.Visible;
+            return;
+        }
+
+        _lastExpandedNavigationPaneWidth = Math.Max(ExpandedNavigationPaneWidth, NavigationPaneBorder.ActualWidth);
+        NavigationPaneColumn.Width = new GridLength(CollapsedNavigationPaneWidth);
+        NavigationSplitter.Width = 0;
+        NavigationSplitter.Visibility = Visibility.Collapsed;
+    }
+
+    private void FocusSelectedTerminalViewport()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            OpenSessionsTabControl.UpdateLayout();
+            if (OpenSessionsTabControl.SelectedItem is null)
+            {
+                return;
+            }
+
+            var container = OpenSessionsTabControl.ItemContainerGenerator.ContainerFromItem(OpenSessionsTabControl.SelectedItem) as TabItem;
+            var terminalBox = FindDescendant<AnsiTerminalBox>(container);
+            terminalBox?.FocusTerminalInput();
+        }, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
+    {
+        while (source is not null)
+        {
+            if (source is T match)
+            {
+                return match;
+            }
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return null;
+    }
+
+    private static T? FindDescendant<T>(DependencyObject? source) where T : DependencyObject
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(source); index++)
+        {
+            var child = VisualTreeHelper.GetChild(source, index);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            var nested = FindDescendant<T>(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private static string ResolveBridgePortKey(string descriptor)

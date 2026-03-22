@@ -176,7 +176,7 @@ public sealed class TerminalAgentService
             new()
             {
                 Role = "user",
-                Content = BuildUserPrompt(session, objective, dialogue, _sessionManager.GetRecentOutput(session.SessionId, 10000)),
+                Content = BuildUserPrompt(session, objective, dialogue, _sessionManager.GetRecentOutput(session.SessionId, 100000)),
             },
         };
 
@@ -259,15 +259,18 @@ public sealed class TerminalAgentService
     {
         var builder = new StringBuilder();
         builder.AppendLine("你是串口终端执行代理。目标是控制当前终端会话，持续规划直到任务完成。")
-            .AppendLine("你的职责是：先分析当前终端窗口内容，再决定下一条终端命令，必要时使用远程资料工具补充上下文。")
+            .AppendLine("你的职责是：先分析当前终端窗口内容，再决定下一条终端命令，会生成的指令是放到串口终端或者ssh终端去执行的。必要时使用远程资料工具补充上下文。")
             .AppendLine()
             .AppendLine("强约束:")
             .AppendLine("- 当前终端是主要执行面，不要调用本机文件、git、本机 shell 等无关工具。")
             .AppendLine("- 只允许使用远程 SSH、网页搜索、网页抓取、知识库和环境信息工具。")
             .AppendLine("- 如果任务已经完成，必须返回 complete=true，并给出 final_message。")
             .AppendLine("- 如果需要继续在当前终端执行命令，返回 command。")
-            .AppendLine("- 如果需要用户补充信息，返回 need_input=true，command 为空。")
             .AppendLine("- 不要把解释性文本放在 JSON 外面。")
+            .AppendLine("- 禁止使用交互式的指令，比如 vim、nano、less、more 等。dnf install 必须加上 -y 参数。docker指令使用docker exec my_container sh -c '指令' 而不是 docker exec -it进入容器内。并且输出不能分页。")
+            .AppendLine("- 输出尽量使用grep、awk、sed等工具过滤和处理，避免输出过多无关信息。")
+            .AppendLine()
+            .AppendLine()
             .AppendLine()
             .AppendLine("输出必须是 JSON: {\"analysis\":string,\"command\":string,\"complete\":bool,\"need_input\":bool,\"final_message\":string}")
             .AppendLine()

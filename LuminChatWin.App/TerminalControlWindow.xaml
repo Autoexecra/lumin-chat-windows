@@ -9,6 +9,24 @@
         MinWidth="1380"
         MinHeight="860"
         WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <Style x:Key="NavigationTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+            <Setter Property="Width" Value="52"/>
+            <Setter Property="Height" Value="108"/>
+            <Setter Property="Padding" Value="10,12"/>
+            <Setter Property="HeaderTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextAlignment="Center" FontWeight="SemiBold">
+                            <TextBlock.LayoutTransform>
+                                <RotateTransform Angle="90"/>
+                            </TextBlock.LayoutTransform>
+                        </TextBlock>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -17,13 +35,13 @@
 
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="360"/>
+                <ColumnDefinition x:Name="NavigationPaneColumn" Width="260"/>
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="12">
-                <TabControl x:Name="NavigationTabControl" TabStripPlacement="Left">
+            <Border x:Name="NavigationPaneBorder" Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="10">
+                <TabControl x:Name="NavigationTabControl" TabStripPlacement="Left" ItemContainerStyle="{StaticResource NavigationTabItemStyle}" PreviewMouseDoubleClick="NavigationTabControl_PreviewMouseDoubleClick">
                     <TabItem Header="会话">
                         <Grid Margin="10,0,0,0">
                             <Grid.RowDefinitions>
@@ -351,7 +369,7 @@
                 </TabControl>
             </Border>
 
-            <GridSplitter Grid.Column="1" HorizontalAlignment="Center" Width="12" Background="Transparent"/>
+            <GridSplitter x:Name="NavigationSplitter" Grid.Column="1" HorizontalAlignment="Center" Width="12" Background="Transparent"/>
 
             <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="24" Padding="10">
                 <Grid>
