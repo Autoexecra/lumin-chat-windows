@@ -216,6 +216,119 @@ public sealed class TerminalServicesTests
     }
 
     [Fact]
+    public async Task TerminalAgentService_OnlyExposesRequestedTools()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Tool Filter PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            var client = new CapturingTerminalAgentChatCompletionClient(new LlmResponse
+            {
+                Success = true,
+                Content = """
+                {"analysis":"工具列表已检查。","command":"","complete":true,"need_input":false,"final_message":"完成"}
+                """,
+            });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+
+            var result = await service.RunLoopAsync(session.SessionId, "检查工具白名单", [], "auto", TerminalAgentMode.Prompt);
+
+            Assert.True(result.Success);
+            Assert.Equal(
+                [
+                    "fetch_web_page",
+                    "list_knowledge_documents",
+                    "read_knowledge_document",
+                    "search_web",
+                    "ssh_execute_command",
+                    "ssh_list_directory",
+                    "ssh_read_file",
+                    "ssh_write_file",
+                    "write_knowledge_document",
+                ],
+                client.LastToolNames.OrderBy(static item => item, StringComparer.Ordinal).ToArray());
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalAgentService_UserPrompt_UsesTranscriptInsteadOfDialogueHistory()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Transcript PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            await manager.ExecuteCommandAsync(session.SessionId, "Write-Output 'transcript-only'", TimeSpan.FromSeconds(8));
+            var client = new CapturingTerminalAgentChatCompletionClient(new LlmResponse
+            {
+                Success = true,
+                Content = """
+                {"analysis":"已读取终端输出。","command":"","complete":true,"need_input":false,"final_message":"完成"}
+                """,
+            });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+            var dialogue = new List<TerminalAgentDialogueItem>
+            {
+                new() { Role = "assistant", Content = "this-should-not-appear" },
+            };
+
+            var result = await service.RunLoopAsync(session.SessionId, "只使用终端输出", dialogue, "auto", TerminalAgentMode.Prompt);
+
+            Assert.True(result.Success);
+            Assert.Contains("transcript-only", client.LastUserPrompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("this-should-not-appear", client.LastUserPrompt, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
+    public void SystemPromptBuilder_IncludesRepositoryAndSecondaryServerContext()
+    {
+        var config = AppConfig.CreateDefault();
+        config.SecondaryServer.Enabled = true;
+        config.SecondaryServer.Host = "192.168.0.20";
+        config.SecondaryServer.Port = 2222;
+        config.SecondaryServer.User = "root";
+        config.KnowledgeBase.Enabled = true;
+        config.KnowledgeBase.Host = "10.0.0.8";
+        config.KnowledgeBase.Port = 22;
+        config.KnowledgeBase.RootDir = "/root/docs";
+        config.KnowledgeBase.LocalCacheDir = "~/.cache/repository";
+
+        var prompt = SystemPromptBuilder.Build(config, 1, 5);
+
+        Assert.Contains("辅助服务器", prompt, StringComparison.Ordinal);
+        Assert.Contains("192.168.0.20:2222", prompt, StringComparison.Ordinal);
+        Assert.Contains("资料库", prompt, StringComparison.Ordinal);
+        Assert.Contains("/root/docs", prompt, StringComparison.Ordinal);
+        Assert.Contains(ConfigService.ExpandPath(config.KnowledgeBase.LocalCacheDir), prompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task SerialSshBridgeServer_ExecCommand_ReturnsCommandOutput()
     {
         var port = GetFreePort();
@@ -254,7 +367,7 @@ public sealed class TerminalServicesTests
 
         Assert.Equal("echo bridge", receivedCommand);
         Assert.Contains("bridge-exec-ok", output, StringComparison.Ordinal);
-        Assert.Equal<uint>(0, (uint)command.ExitStatus);
+        Assert.Equal(0, command.ExitStatus);
 
         client.Disconnect();
     }
@@ -385,6 +498,25 @@ public sealed class TerminalServicesTests
 
         public Task<LlmResponse> CompleteAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, CancellationToken cancellationToken = default)
         {
+            return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"command\":\"\",\"complete\":true,\"need_input\":false,\"final_message\":\"\"}" });
+        }
+    }
+
+    private sealed class CapturingTerminalAgentChatCompletionClient(params LlmResponse[] responses) : IChatCompletionClient
+    {
+        private readonly Queue<LlmResponse> _responses = new(responses);
+
+        public IReadOnlyList<string> LastToolNames { get; private set; } = [];
+
+        public string LastUserPrompt { get; private set; } = string.Empty;
+
+        public Task<LlmResponse> CompleteAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, CancellationToken cancellationToken = default)
+        {
+            LastToolNames = tools?
+                .Select(static tool => tool.TryGetValue("function", out var functionObject) && functionObject is Dictionary<string, object?> function && function.TryGetValue("name", out var nameObject) ? nameObject?.ToString() ?? string.Empty : string.Empty)
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .ToArray() ?? [];
+            LastUserPrompt = messages.LastOrDefault(static item => item.Role == "user")?.Content ?? string.Empty;
             return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"command\":\"\",\"complete\":true,\"need_input\":false,\"final_message\":\"\"}" });
         }
     }

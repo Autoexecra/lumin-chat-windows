@@ -67,9 +67,12 @@ public sealed class OpenAiCompatibleChatClient : IChatCompletionClient
                 payload["extra_body"] = new JsonObject { ["enable_thinking"] = true };
             }
 
-            request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
+            var requestBody = payload.ToJsonString();
+            request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+            LlmDebugLogger.LogRequest(config, modelLevel, request.RequestUri?.ToString() ?? string.Empty, requestBody);
             using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            LlmDebugLogger.LogResponse(config, modelLevel, body, response.IsSuccessStatusCode);
             if (!response.IsSuccessStatusCode)
             {
                 return new LlmResponse
@@ -83,6 +86,7 @@ public sealed class OpenAiCompatibleChatClient : IChatCompletionClient
         }
         catch (Exception ex)
         {
+            LlmDebugLogger.LogResponse(config, modelLevel, ex.ToString(), success: false);
             return new LlmResponse { Success = false, Error = ex.Message };
         }
     }

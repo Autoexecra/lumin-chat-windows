@@ -369,6 +369,9 @@ public sealed class KnowledgeBaseConfig
     [JsonPropertyName("root_dir")]
     public string RootDir { get; set; } = string.Empty;
 
+    [JsonPropertyName("local_cache_dir")]
+    public string LocalCacheDir { get; set; } = "~/.lumin-chat-win/knowledge-cache";
+
     [JsonPropertyName("patterns")]
     public List<string> Patterns { get; set; } = ["*.md", "*.txt"];
 }
@@ -443,6 +446,9 @@ public sealed class DebugModeConfig
 
     [JsonPropertyName("show_llm_responses")]
     public bool ShowLlmResponses { get; set; }
+
+    [JsonPropertyName("log_dir")]
+    public string LogDir { get; set; } = "~/.lumin-chat-win/logs/llm-debug";
 }
 
 public sealed class AiModelConfig

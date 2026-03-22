@@ -41,9 +41,9 @@ public static class SystemPromptBuilder
             "ssh_path_exists: 检查远端路径是否存在",
             "fetch_web_page: 抓取网页正文与标题",
             "search_web: 执行公开网页搜索",
-            "list_knowledge_documents: 浏览知识库文档",
-            "read_knowledge_document: 读取知识库文档",
-            "write_knowledge_document: 写回知识库文档",
+            "list_knowledge_documents: 浏览资料库文档",
+            "read_knowledge_document: 读取资料库文档",
+            "write_knowledge_document: 写回资料库文档",
         };
 
         var builder = new StringBuilder();
@@ -93,10 +93,11 @@ public static class SystemPromptBuilder
         if (config.KnowledgeBase.Enabled)
         {
             builder.AppendLine()
-                .AppendLine("知识库:")
+                .AppendLine("资料库:")
                 .AppendLine($"- 主机: {config.KnowledgeBase.Host}:{config.KnowledgeBase.Port}")
                 .AppendLine($"- 根目录: {config.KnowledgeBase.RootDir}")
-                .AppendLine("- 执行复杂任务前，优先浏览文档名称并按需读取最相关内容。");
+                .AppendLine($"- 本地缓存目录: {ConfigService.ExpandPath(config.KnowledgeBase.LocalCacheDir)}")
+                .AppendLine("- 执行复杂任务前，优先浏览资料名称并按需读取最相关内容。");
         }
 
         if (!string.IsNullOrWhiteSpace(customTemplate))

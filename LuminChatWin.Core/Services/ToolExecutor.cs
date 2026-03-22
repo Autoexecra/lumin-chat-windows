@@ -15,6 +15,9 @@ public sealed class ToolExecutor
     private readonly SshService _sshService = new();
     private readonly WebToolClient _webToolClient = new();
     private readonly Func<string, string, bool>? _confirmCallback;
+    private readonly Dictionary<string, Dictionary<string, object?>> _knowledgeDocumentIndex = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _knowledgeDocumentCache = new(StringComparer.OrdinalIgnoreCase);
+    private bool _knowledgeIndexLoaded;
 
     public ToolExecutor(AppConfig config, string cwd, string approvalPolicy = "auto", Func<string, string, bool>? confirmCallback = null)
     {
@@ -200,18 +203,18 @@ public sealed class ToolExecutor
                 ["query"] = new Dictionary<string, object?> { ["type"] = "string" },
                 ["limit"] = new Dictionary<string, object?> { ["type"] = "integer", ["default"] = 5 },
             }, ["query"]),
-            CreateTool("list_knowledge_documents", "List configured knowledge-base documents.", new Dictionary<string, object?>
+            CreateTool("list_knowledge_documents", "List configured repository documents.", new Dictionary<string, object?>
             {
                 ["keyword"] = new Dictionary<string, object?> { ["type"] = "string" },
                 ["limit"] = new Dictionary<string, object?> { ["type"] = "integer", ["default"] = 50 },
             }, []),
-            CreateTool("read_knowledge_document", "Read a knowledge-base document.", new Dictionary<string, object?>
+            CreateTool("read_knowledge_document", "Read a repository document.", new Dictionary<string, object?>
             {
                 ["path"] = new Dictionary<string, object?> { ["type"] = "string" },
                 ["start_line"] = new Dictionary<string, object?> { ["type"] = "integer", ["default"] = 1 },
                 ["end_line"] = new Dictionary<string, object?> { ["type"] = "integer", ["default"] = 200 },
             }, ["path"]),
-            CreateTool("write_knowledge_document", "Write a knowledge-base document.", new Dictionary<string, object?>
+            CreateTool("write_knowledge_document", "Write a repository document.", new Dictionary<string, object?>
             {
                 ["path"] = new Dictionary<string, object?> { ["type"] = "string" },
                 ["content"] = new Dictionary<string, object?> { ["type"] = "string" },
@@ -629,14 +632,14 @@ public sealed class ToolExecutor
     {
         if (!_config.KnowledgeBase.Enabled)
         {
-            return new ToolExecutionResult("list_knowledge_documents", false, "知识库未启用。");
+            return new ToolExecutionResult("list_knowledge_documents", false, "资料库未启用。");
         }
 
-        var settings = CreateKnowledgeBaseSettings();
-        var entries = _sshService.ListDirectory(settings, _config.KnowledgeBase.RootDir, true, Math.Clamp(limit * 4, 1, 500))
-            .Where(static item => item.TryGetValue("is_dir", out var isDir) && isDir is bool value && !value)
-            .Where(item => MatchKnowledgePattern(item["relative_path"]?.ToString() ?? string.Empty, _config.KnowledgeBase.Patterns))
+        // Cache one merged local/remote index per executor so repeated planning rounds don't rescan the repository.
+        EnsureKnowledgeIndexLoaded();
+        var entries = _knowledgeDocumentIndex.Values
             .Where(item => string.IsNullOrWhiteSpace(keyword) || (item["relative_path"]?.ToString() ?? string.Empty).Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(item => item["relative_path"]?.ToString(), StringComparer.OrdinalIgnoreCase)
             .Take(Math.Clamp(limit, 1, 200))
             .ToList();
         return new ToolExecutionResult("list_knowledge_documents", true, Json(entries));
@@ -646,26 +649,156 @@ public sealed class ToolExecutor
     {
         if (!_config.KnowledgeBase.Enabled)
         {
-            return new ToolExecutionResult("read_knowledge_document", false, "知识库未启用。");
+            return new ToolExecutionResult("read_knowledge_document", false, "资料库未启用。");
         }
 
-        var settings = CreateKnowledgeBaseSettings();
-        var fullPath = CombineRemote(_config.KnowledgeBase.RootDir, path);
-        var text = _sshService.ReadFile(settings, fullPath, startLine, endLine);
-        return new ToolExecutionResult("read_knowledge_document", true, text);
+        EnsureKnowledgeIndexLoaded();
+        var normalizedPath = NormalizeKnowledgePath(path);
+        var fullText = ReadKnowledgeDocumentContent(normalizedPath);
+        return new ToolExecutionResult("read_knowledge_document", true, SliceNumberedLines(fullText, startLine, endLine));
     }
 
     private ToolExecutionResult WriteKnowledgeDocument(string path, string content, bool append)
     {
         if (!_config.KnowledgeBase.Enabled)
         {
-            return new ToolExecutionResult("write_knowledge_document", false, "知识库未启用。");
+            return new ToolExecutionResult("write_knowledge_document", false, "资料库未启用。");
         }
 
         var settings = CreateKnowledgeBaseSettings();
-        var fullPath = CombineRemote(_config.KnowledgeBase.RootDir, path);
+        var normalizedPath = NormalizeKnowledgePath(path);
+        var fullPath = CombineRemote(_config.KnowledgeBase.RootDir, normalizedPath);
         _sshService.WriteFile(settings, fullPath, content, append);
-        return new ToolExecutionResult("write_knowledge_document", true, "知识库文档写入完成。");
+        WriteKnowledgeCacheFile(normalizedPath, append && File.Exists(ResolveKnowledgeCachePath(normalizedPath))
+            ? File.ReadAllText(ResolveKnowledgeCachePath(normalizedPath)) + content
+            : content);
+        _knowledgeDocumentCache[normalizedPath] = append && _knowledgeDocumentCache.TryGetValue(normalizedPath, out var existingContent)
+            ? existingContent + content
+            : content;
+        UpsertKnowledgeEntry(normalizedPath, remoteAvailable: true, localAvailable: true);
+        return new ToolExecutionResult("write_knowledge_document", true, "资料库文档写入完成。");
+    }
+
+    private void EnsureKnowledgeIndexLoaded()
+    {
+        if (_knowledgeIndexLoaded)
+        {
+            return;
+        }
+
+        _knowledgeDocumentIndex.Clear();
+        LoadLocalKnowledgeEntries();
+        LoadRemoteKnowledgeEntries();
+        _knowledgeIndexLoaded = true;
+    }
+
+    private void LoadLocalKnowledgeEntries()
+    {
+        var cacheRoot = ResolveKnowledgeCacheRoot();
+        Directory.CreateDirectory(cacheRoot);
+        foreach (var file in EnumerateMatchingFiles(cacheRoot, "**/*", true))
+        {
+            var relativePath = Path.GetRelativePath(cacheRoot, file).Replace('\\', '/');
+            if (!MatchKnowledgePattern(relativePath, _config.KnowledgeBase.Patterns))
+            {
+                continue;
+            }
+
+            UpsertKnowledgeEntry(relativePath, remoteAvailable: false, localAvailable: true);
+        }
+    }
+
+    private void LoadRemoteKnowledgeEntries()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_config.KnowledgeBase.Host) || string.IsNullOrWhiteSpace(_config.KnowledgeBase.RootDir))
+            {
+                return;
+            }
+
+            var settings = CreateKnowledgeBaseSettings();
+            var entries = _sshService.ListDirectory(settings, _config.KnowledgeBase.RootDir, true, 500)
+                .Where(static item => item.TryGetValue("is_dir", out var isDir) && isDir is bool value && !value);
+
+            foreach (var entry in entries)
+            {
+                var relativePath = NormalizeKnowledgePath(entry["relative_path"]?.ToString() ?? string.Empty);
+                if (!MatchKnowledgePattern(relativePath, _config.KnowledgeBase.Patterns))
+                {
+                    continue;
+                }
+
+                UpsertKnowledgeEntry(relativePath, remoteAvailable: true, localAvailable: File.Exists(ResolveKnowledgeCachePath(relativePath)));
+            }
+        }
+        catch
+        {
+            // Keep local cache available even when the remote repository is temporarily unreachable.
+        }
+    }
+
+    private void UpsertKnowledgeEntry(string relativePath, bool remoteAvailable, bool localAvailable)
+    {
+        var normalizedPath = NormalizeKnowledgePath(relativePath);
+        _knowledgeDocumentIndex[normalizedPath] = new Dictionary<string, object?>
+        {
+            ["path"] = normalizedPath,
+            ["relative_path"] = normalizedPath,
+            ["source"] = remoteAvailable && localAvailable ? "remote+local" : remoteAvailable ? "remote" : "local",
+            ["cached_locally"] = localAvailable,
+            ["remote_available"] = remoteAvailable,
+        };
+    }
+
+    private string ReadKnowledgeDocumentContent(string normalizedPath)
+    {
+        if (_knowledgeDocumentCache.TryGetValue(normalizedPath, out var cachedText))
+        {
+            return cachedText;
+        }
+
+        var cachePath = ResolveKnowledgeCachePath(normalizedPath);
+        if (File.Exists(cachePath))
+        {
+            var localText = File.ReadAllText(cachePath);
+            _knowledgeDocumentCache[normalizedPath] = localText;
+            return localText;
+        }
+
+        var settings = CreateKnowledgeBaseSettings();
+        var remoteText = _sshService.ReadAllText(settings, CombineRemote(_config.KnowledgeBase.RootDir, normalizedPath));
+        WriteKnowledgeCacheFile(normalizedPath, remoteText);
+        _knowledgeDocumentCache[normalizedPath] = remoteText;
+        UpsertKnowledgeEntry(normalizedPath, remoteAvailable: true, localAvailable: true);
+        return remoteText;
+    }
+
+    private string ResolveKnowledgeCacheRoot() => ConfigService.ExpandPath(_config.KnowledgeBase.LocalCacheDir);
+
+    private string ResolveKnowledgeCachePath(string relativePath)
+    {
+        var normalizedPath = NormalizeKnowledgePath(relativePath).Replace('/', Path.DirectorySeparatorChar);
+        return Path.Combine(ResolveKnowledgeCacheRoot(), normalizedPath);
+    }
+
+    private void WriteKnowledgeCacheFile(string relativePath, string content)
+    {
+        var cachePath = ResolveKnowledgeCachePath(relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+        File.WriteAllText(cachePath, content);
+    }
+
+    private static string NormalizeKnowledgePath(string path) => path.Replace('\\', '/').TrimStart('/').Trim();
+
+    private static string SliceNumberedLines(string text, int startLine, int endLine)
+    {
+        var normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        return string.Join(Environment.NewLine,
+            normalized.Split('\n')
+                .Skip(Math.Max(0, startLine - 1))
+                .Take(Math.Max(1, endLine - startLine + 1))
+                .Select((line, index) => $"{startLine + index}: {line}"));
     }
 
     private static Dictionary<string, object?> CreateTool(string name, string description, Dictionary<string, object?> properties, string[] required)

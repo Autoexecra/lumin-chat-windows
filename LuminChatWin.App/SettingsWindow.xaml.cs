@@ -11,6 +11,7 @@ public partial class SettingsWindow : Window
     private readonly AppRuntime _runtime;
     private readonly AppConfig _draft;
     private readonly Dictionary<string, Control> _controls = new(StringComparer.OrdinalIgnoreCase);
+    private TextBlock? _knowledgeTestStatusTextBlock;
 
     public SettingsWindow(AppRuntime runtime)
     {
@@ -83,13 +84,25 @@ public partial class SettingsWindow : Window
 
     private void BuildKnowledge()
     {
-        AddCheckBox(KnowledgePanel, "knowledge_enabled", "启用知识库", _draft.KnowledgeBase.Enabled);
+        AddCheckBox(KnowledgePanel, "knowledge_enabled", "启用资料库", _draft.KnowledgeBase.Enabled);
         AddTextBox(KnowledgePanel, "knowledge_host", "主机", _draft.KnowledgeBase.Host);
         AddTextBox(KnowledgePanel, "knowledge_port", "端口", _draft.KnowledgeBase.Port.ToString());
         AddTextBox(KnowledgePanel, "knowledge_username", "用户", _draft.KnowledgeBase.Username);
         AddTextBox(KnowledgePanel, "knowledge_password", "密码", _draft.KnowledgeBase.Password);
-        AddTextBox(KnowledgePanel, "knowledge_root_dir", "根目录", _draft.KnowledgeBase.RootDir);
+        AddTextBox(KnowledgePanel, "knowledge_root_dir", "远端根目录", _draft.KnowledgeBase.RootDir);
+        AddTextBox(KnowledgePanel, "knowledge_local_cache_dir", "本地缓存目录", _draft.KnowledgeBase.LocalCacheDir);
         AddMultiLineTextBox(KnowledgePanel, "knowledge_patterns", "匹配模式", string.Join(Environment.NewLine, _draft.KnowledgeBase.Patterns));
+        var testButton = new Button { Content = "测试资料库连接" };
+        testButton.Click += TestKnowledgeConnection_Click;
+        KnowledgePanel.Children.Add(testButton);
+        _knowledgeTestStatusTextBlock = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (System.Windows.Media.Brush?)FindResource("MutedBrush"),
+            Text = "可以用它快速验证远端资料库是否可访问。",
+        };
+        KnowledgePanel.Children.Add(_knowledgeTestStatusTextBlock);
     }
 
     private void BuildLicense()
@@ -100,8 +113,10 @@ public partial class SettingsWindow : Window
         AddTextBox(LicensePanel, "license_secret_env", "密钥环境变量", _draft.License.SecretEnv);
         AddTextBox(LicensePanel, "license_secret", "密钥", _draft.License.Secret);
         AddCheckBox(LicensePanel, "debug_enabled", "启用调试模式", _draft.Log.DebugMode.Enabled);
-        AddCheckBox(LicensePanel, "debug_prompts", "显示 LLM Prompt", _draft.Log.DebugMode.ShowLlmPrompts);
-        AddCheckBox(LicensePanel, "debug_responses", "显示 LLM Response", _draft.Log.DebugMode.ShowLlmResponses);
+        AddCheckBox(LicensePanel, "debug_prompts", "记录 LLM Prompt", _draft.Log.DebugMode.ShowLlmPrompts);
+        AddCheckBox(LicensePanel, "debug_responses", "记录 LLM Response", _draft.Log.DebugMode.ShowLlmResponses);
+        AddTextBox(LicensePanel, "debug_log_dir", "调试日志目录", _draft.Log.DebugMode.LogDir);
+        AddInfoText(LicensePanel, "启用后会把每次请求和返回分别落盘到日志目录，便于定位提示词和模型返回问题。", new Thickness(0, 6, 0, 0));
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)
@@ -149,6 +164,7 @@ public partial class SettingsWindow : Window
         _draft.KnowledgeBase.Username = ReadText("knowledge_username", _draft.KnowledgeBase.Username);
         _draft.KnowledgeBase.Password = ReadText("knowledge_password", _draft.KnowledgeBase.Password);
         _draft.KnowledgeBase.RootDir = ReadText("knowledge_root_dir", _draft.KnowledgeBase.RootDir);
+        _draft.KnowledgeBase.LocalCacheDir = ReadText("knowledge_local_cache_dir", _draft.KnowledgeBase.LocalCacheDir);
         _draft.KnowledgeBase.Patterns = ReadLines("knowledge_patterns");
 
         _draft.License.Enabled = ReadCheckBox("license_enabled", _draft.License.Enabled);
@@ -159,9 +175,38 @@ public partial class SettingsWindow : Window
         _draft.Log.DebugMode.Enabled = ReadCheckBox("debug_enabled", _draft.Log.DebugMode.Enabled);
         _draft.Log.DebugMode.ShowLlmPrompts = ReadCheckBox("debug_prompts", _draft.Log.DebugMode.ShowLlmPrompts);
         _draft.Log.DebugMode.ShowLlmResponses = ReadCheckBox("debug_responses", _draft.Log.DebugMode.ShowLlmResponses);
+        _draft.Log.DebugMode.LogDir = ReadText("debug_log_dir", _draft.Log.DebugMode.LogDir);
 
         _runtime.SaveConfig(_draft);
         MessageBox.Show(this, "综合设置已保存。", "保存成功", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void TestKnowledgeConnection_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var settings = new SshConnectionSettings
+            {
+                Host = ReadText("knowledge_host", _draft.KnowledgeBase.Host),
+                Port = ReadInt("knowledge_port", _draft.KnowledgeBase.Port),
+                Username = ReadText("knowledge_username", _draft.KnowledgeBase.Username),
+                Password = ReadText("knowledge_password", _draft.KnowledgeBase.Password),
+                Timeout = TimeSpan.FromSeconds(10),
+            };
+            var rootDir = ReadText("knowledge_root_dir", _draft.KnowledgeBase.RootDir);
+            var entries = new SshService().ListDirectory(settings, rootDir, false, 5);
+            if (_knowledgeTestStatusTextBlock is not null)
+            {
+                _knowledgeTestStatusTextBlock.Text = $"资料库连接成功。路径 {rootDir} 可访问，返回 {entries.Count} 条记录。";
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_knowledgeTestStatusTextBlock is not null)
+            {
+                _knowledgeTestStatusTextBlock.Text = $"资料库连接失败: {ex.Message}";
+            }
+        }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)

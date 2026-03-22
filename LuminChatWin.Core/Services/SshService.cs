@@ -64,17 +64,18 @@ public sealed class SshService
 
     public string ReadFile(SshConnectionSettings settings, string path, int startLine = 1, int endLine = 200)
     {
+        var content = ReadAllText(settings, path);
+        var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+        return string.Join(Environment.NewLine, lines.Skip(Math.Max(0, startLine - 1)).Take(Math.Max(1, endLine - startLine + 1)).Select((line, index) => $"{startLine + index}: {line}"));
+    }
+
+    public string ReadAllText(SshConnectionSettings settings, string path)
+    {
         using var sftp = CreateSftp(settings);
         sftp.Connect();
         using var stream = sftp.OpenRead(path);
         using var reader = new StreamReader(stream);
-        var lines = new List<string>();
-        while (!reader.EndOfStream)
-        {
-            lines.Add(reader.ReadLine() ?? string.Empty);
-        }
-
-        return string.Join(Environment.NewLine, lines.Skip(Math.Max(0, startLine - 1)).Take(Math.Max(1, endLine - startLine + 1)).Select((line, index) => $"{startLine + index}: {line}"));
+        return reader.ReadToEnd();
     }
 
     public void WriteFile(SshConnectionSettings settings, string path, string content, bool append = false)
