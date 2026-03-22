@@ -60,7 +60,7 @@ internal static class TerminalAnsiRenderer
             {
                 if (TryReadCsi(text, ref index, out var sequence))
                 {
-                    ApplyCsi(sequence, state);
+                    ApplyCsi(sequence, state, ref currentLine, lines, ref cursorColumn);
                     continue;
                 }
 
@@ -94,6 +94,11 @@ internal static class TerminalAnsiRenderer
                     break;
                 default:
                     var styledCharacter = new StyledCharacter(current, state.ToSpec());
+                    while (currentLine.Count < cursorColumn)
+                    {
+                        currentLine.Add(new StyledCharacter(' ', state.ToSpec()));
+                    }
+
                     if (cursorColumn < currentLine.Count)
                     {
                         currentLine[cursorColumn] = styledCharacter;
@@ -126,9 +131,9 @@ internal static class TerminalAnsiRenderer
             var current = text[end];
             if (current >= '@' && current <= '~')
             {
-                sequence = text[(index + 2)..end];
+                sequence = text[(index + 2)..(end + 1)];
                 index = end;
-                return current == 'm';
+                return true;
             }
 
             end++;
@@ -165,11 +170,24 @@ internal static class TerminalAnsiRenderer
         return true;
     }
 
-    private static void ApplyCsi(string sequence, RenderState state)
+    private static void ApplyCsi(string sequence, RenderState state, ref List<StyledCharacter> currentLine, List<List<StyledCharacter>> lines, ref int cursorColumn)
     {
-        var parts = string.IsNullOrWhiteSpace(sequence)
+        if (string.IsNullOrEmpty(sequence))
+        {
+            return;
+        }
+
+        var finalChar = sequence[^1];
+        var payload = sequence[..^1];
+        if (finalChar != 'm')
+        {
+            ApplyCursorCsi(finalChar, payload, ref currentLine, lines, ref cursorColumn);
+            return;
+        }
+
+        var parts = string.IsNullOrWhiteSpace(payload)
             ? ["0"]
-            : sequence.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            : payload.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
         for (var index = 0; index < parts.Length; index++)
         {
@@ -245,6 +263,47 @@ internal static class TerminalAnsiRenderer
                     break;
             }
         }
+    }
+
+    private static void ApplyCursorCsi(char finalChar, string payload, ref List<StyledCharacter> currentLine, List<List<StyledCharacter>> lines, ref int cursorColumn)
+    {
+        var amount = TryParseCsiAmount(payload);
+        switch (finalChar)
+        {
+            case 'C':
+                cursorColumn += amount;
+                break;
+            case 'D':
+                cursorColumn = Math.Max(0, cursorColumn - amount);
+                break;
+            case 'G':
+                cursorColumn = Math.Max(0, amount - 1);
+                break;
+            case 'K':
+                if (cursorColumn < currentLine.Count)
+                {
+                    currentLine.RemoveRange(cursorColumn, currentLine.Count - cursorColumn);
+                }
+                break;
+            case 'H':
+            case 'f':
+                var coordinates = payload.Split(';', StringSplitOptions.TrimEntries);
+                var row = coordinates.Length > 0 && int.TryParse(coordinates[0], out var parsedRow) ? Math.Max(1, parsedRow) : 1;
+                var column = coordinates.Length > 1 && int.TryParse(coordinates[1], out var parsedColumn) ? Math.Max(1, parsedColumn) : 1;
+                while (lines.Count < row)
+                {
+                    lines.Add([]);
+                }
+
+                currentLine = lines[row - 1];
+                cursorColumn = column - 1;
+                break;
+        }
+    }
+
+    private static int TryParseCsiAmount(string payload)
+    {
+        return int.TryParse(payload, out var parsed) && parsed > 0 ? parsed : 1;
     }
 
     private static void WriteLines(Paragraph paragraph, IReadOnlyList<List<StyledCharacter>> lines)

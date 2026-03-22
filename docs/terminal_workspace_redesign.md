@@ -136,6 +136,8 @@ Agent 工作台拆成三个相邻标签：
 - 如果任务未完成，模型不再把命令写进 JSON，而是通过 `tool_calls` 返回下一步动作。
 - `run_shell_command` 在终端分支里不是执行本机 PowerShell，而是把 `command` 投递到当前选中的终端会话窗口中执行。
 - 自动模式会直接执行 `run_shell_command`；提示模式会把这条 tool call 拦截成建议命令，等待用户确认。
+- 终端执行前会先发送一次回车探测当前状态；若检测到 `login:`，会尝试默认账号 `root` 和默认密码 `Ncti2023` 登录，登录成功后再下发命令。
+- `run_shell_command` 默认超时为 120 秒；遇到下载、联网、硬件探测等可能长时间阻塞的任务时，模型应把 `timeout_seconds` 提高到最多 1800 秒。
 
 这使 Agent 同时覆盖两种工作流：
 

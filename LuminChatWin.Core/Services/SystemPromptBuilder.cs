@@ -17,7 +17,7 @@ public static class SystemPromptBuilder
 
         var tools = new[]
         {
-            "run_shell_command: 执行本机 PowerShell 命令",
+            "run_shell_command: 执行本机 PowerShell 命令，默认超时 120 秒；下载、联网、硬件探测等长任务可显式提高到 1800 秒",
             "change_directory: 切换当前工作目录",
             "list_directory: 查看目录结构",
             "search_text: 搜索文本内容",

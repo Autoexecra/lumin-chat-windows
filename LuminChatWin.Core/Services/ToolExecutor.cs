@@ -36,10 +36,10 @@ public sealed class ToolExecutor
     {
         return
         [
-            CreateTool("run_shell_command", "Run a PowerShell command in the current workspace.", new Dictionary<string, object?>
+            CreateTool("run_shell_command", "Run a PowerShell command in the current workspace. Default timeout is 120 seconds and can be extended to 1800 seconds for long-running downloads, networking, or hardware inspection commands.", new Dictionary<string, object?>
             {
                 ["command"] = new Dictionary<string, object?> { ["type"] = "string" },
-                ["timeout_seconds"] = new Dictionary<string, object?> { ["type"] = "integer", ["default"] = 30 },
+                ["timeout_seconds"] = new Dictionary<string, object?> { ["type"] = "integer", ["default"] = 120 },
                 ["cwd"] = new Dictionary<string, object?> { ["type"] = "string" },
             }, ["command"]),
             CreateTool("change_directory", "Change current working directory.", new Dictionary<string, object?>
@@ -239,7 +239,7 @@ public sealed class ToolExecutor
         {
             return toolCall.Name switch
             {
-                "run_shell_command" => await RunShellCommandAsync(GetRequiredString(toolCall.Arguments, "command"), GetInt(toolCall.Arguments, "timeout_seconds", 30), GetOptionalString(toolCall.Arguments, "cwd"), cancellationToken).ConfigureAwait(false),
+                "run_shell_command" => await RunShellCommandAsync(GetRequiredString(toolCall.Arguments, "command"), GetInt(toolCall.Arguments, "timeout_seconds", 120), GetOptionalString(toolCall.Arguments, "cwd"), cancellationToken).ConfigureAwait(false),
                 "change_directory" => ChangeDirectory(GetRequiredString(toolCall.Arguments, "path")),
                 "list_directory" => ListDirectory(GetOptionalString(toolCall.Arguments, "path"), GetBool(toolCall.Arguments, "recursive"), GetInt(toolCall.Arguments, "max_entries", 200)),
                 "search_text" => SearchText(GetRequiredString(toolCall.Arguments, "pattern"), GetOptionalString(toolCall.Arguments, "path"), GetOptionalString(toolCall.Arguments, "glob") ?? "**/*", GetBool(toolCall.Arguments, "case_sensitive"), GetInt(toolCall.Arguments, "max_matches", 50)),
@@ -512,7 +512,7 @@ public sealed class ToolExecutor
         return result;
     }
 
-    public async Task<ToolExecutionResult> RunShellCommandAsync(string command, int timeoutSeconds = 30, string? cwd = null, CancellationToken cancellationToken = default)
+    public async Task<ToolExecutionResult> RunShellCommandAsync(string command, int timeoutSeconds = 120, string? cwd = null, CancellationToken cancellationToken = default)
     {
         var allowed = CheckCommandPolicy(command);
         if (!allowed.Ok)
@@ -540,14 +540,27 @@ public sealed class ToolExecutor
 
         using var process = new Process { StartInfo = psi };
         process.Start();
-        await process.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), cancellationToken).ConfigureAwait(false);
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        return new ToolExecutionResult("run_shell_command", process.ExitCode == 0, Json(new Dictionary<string, object?>
+
+        // Read both streams concurrently so long output does not block process exit.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var exitTask = process.WaitForExitAsync(cancellationToken);
+        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)), cancellationToken);
+        var timedOut = await Task.WhenAny(exitTask, timeoutTask).ConfigureAwait(false) == timeoutTask;
+        if (timedOut && !process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
+        return new ToolExecutionResult("run_shell_command", !timedOut && process.ExitCode == 0, Json(new Dictionary<string, object?>
         {
             ["command"] = command,
             ["cwd"] = execCwd,
             ["exit_code"] = process.ExitCode,
+            ["timed_out"] = timedOut,
             ["stdout"] = stdout,
             ["stderr"] = stderr,
         }));

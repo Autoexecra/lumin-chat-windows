@@ -12,6 +12,8 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     private static readonly Regex AnsiControlSequenceRegex = new("\\x1B\\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
     private static readonly Regex AnsiOperatingSystemCommandRegex = new("\\x1B\\][^\\a]*(\\a|\\x1B\\\\)", RegexOptions.Compiled);
     private static readonly Regex DescriptorNumberRegex = new("(\\d+)", RegexOptions.Compiled);
+    private const string DefaultLoginUsername = "root";
+    private const string DefaultLoginPassword = "Ncti2023";
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<TerminalFeatureConfig> _configAccessor;
     private readonly ConcurrentDictionary<string, SerialBridgeState> _bridges = new(StringComparer.OrdinalIgnoreCase);
@@ -155,64 +157,40 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         var startedAt = DateTime.UtcNow;
         try
         {
-            AppendHistory(session, TerminalHistoryEntryKind.Command, command);
-            lock (session.SyncRoot)
+            var readiness = await EnsureSessionReadyForCommandAsync(session, timeout, cancellationToken).ConfigureAwait(false);
+            if (!readiness.Success)
             {
-                session.ActiveCommandText = command;
-                session.ActiveCommandStartedAt = startedAt.ToString("O");
-                session.ActiveCommandBuffer = new StringBuilder();
-                session.LastCommandOutputAt = null;
+                return new TerminalCommandResult
+                {
+                    Success = false,
+                    TimedOut = false,
+                    Command = command,
+                    Output = readiness.Output.TrimEnd(),
+                    StartedAt = startedAt.ToString("O"),
+                    CompletedAt = DateTime.UtcNow.ToString("O"),
+                    Error = readiness.Error,
+                };
             }
+
+            AppendHistory(session, TerminalHistoryEntryKind.Command, command);
+            BeginCommandCapture(session, command, startedAt);
 
             await session.Backend.SendAsync(command + Environment.NewLine, cancellationToken).ConfigureAwait(false);
 
-            var quietWindow = TimeSpan.FromMilliseconds(700);
-            var emptyWait = TimeSpan.FromMilliseconds(900);
-            var timedOut = false;
-            while (DateTime.UtcNow - startedAt < timeout)
+            var timedOut = await WaitForCommandCompletionAsync(session, readiness.PromptMarker, timeout, cancellationToken).ConfigureAwait(false);
+
+            if (timedOut)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(150, cancellationToken).ConfigureAwait(false);
-                DateTime? lastOutputAt;
-                var bufferLength = 0;
-                lock (session.SyncRoot)
-                {
-                    lastOutputAt = session.LastCommandOutputAt;
-                    bufferLength = session.ActiveCommandBuffer?.Length ?? 0;
-                }
-
-                if (bufferLength == 0)
-                {
-                    if (DateTime.UtcNow - startedAt >= emptyWait)
-                    {
-                        break;
-                    }
-
-                    continue;
-                }
-
-                if (lastOutputAt.HasValue && DateTime.UtcNow - lastOutputAt.Value >= quietWindow)
-                {
-                    break;
-                }
-            }
-
-            if (DateTime.UtcNow - startedAt >= timeout)
-            {
-                timedOut = true;
                 await session.Backend.SendInterruptAsync(cancellationToken).ConfigureAwait(false);
-                AppendHistory(session, TerminalHistoryEntryKind.System, $"Command timed out after {timeout.TotalSeconds:F1}s");
+                AppendHistory(session, TerminalHistoryEntryKind.System, $"Command timed out after {timeout.TotalSeconds:F1}s; sent Ctrl+C.");
+
+                // Give the remote shell a short chance to surface the prompt again after Ctrl+C.
+                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                await session.Backend.SendAsync(Environment.NewLine, cancellationToken).ConfigureAwait(false);
+                await WaitForPromptProbeAsync(session, readiness.PromptMarker, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
             }
 
-            string output;
-            lock (session.SyncRoot)
-            {
-                output = session.ActiveCommandBuffer?.ToString() ?? string.Empty;
-                session.ActiveCommandBuffer = null;
-                session.ActiveCommandText = string.Empty;
-                session.ActiveCommandStartedAt = string.Empty;
-                session.LastCommandOutputAt = null;
-            }
+            var output = EndCommandCapture(session);
 
             return new TerminalCommandResult
             {
@@ -227,6 +205,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
         finally
         {
+            ResetActiveCapture(session);
             session.CommandLock.Release();
         }
     }
@@ -381,7 +360,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
                 Text = normalizedText,
             });
             TrimHistory(session.History);
-            if (session.ActiveCommandBuffer is not null)
+            if (session.ActiveCommandBuffer is not null && kind is TerminalHistoryEntryKind.Output or TerminalHistoryEntryKind.Error)
             {
                 session.ActiveCommandBuffer.Append(NormalizeCommandOutput(text));
                 session.LastCommandOutputAt = DateTime.UtcNow;
@@ -531,6 +510,35 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         return buffer.ToString();
     }
 
+    internal static bool IsLoginPrompt(string text)
+    {
+        var lastLine = GetLastMeaningfulLine(text);
+        return lastLine.EndsWith("login:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsPasswordPrompt(string text)
+    {
+        var lastLine = GetLastMeaningfulLine(text);
+        return lastLine.EndsWith("password:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? TryExtractShellPromptMarker(string text)
+    {
+        var lastLine = GetLastMeaningfulLine(text);
+        if (string.IsNullOrWhiteSpace(lastLine) || IsLoginPrompt(lastLine) || IsPasswordPrompt(lastLine))
+        {
+            return null;
+        }
+
+        var trimmed = lastLine.TrimEnd();
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        return trimmed[^1] is '#' or '$' or '>' or '%' ? trimmed : null;
+    }
+
     private static void ApplyTerminalChunk(SessionState session, string text)
     {
         var currentLineStartIndex = session.CurrentLineStartIndex;
@@ -612,6 +620,209 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             AnsiOperatingSystemCommandRegex.Replace(text, string.Empty),
             string.Empty);
     }
+
+    private async Task<CommandReadinessResult> EnsureSessionReadyForCommandAsync(SessionState session, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var probeBudget = TimeSpan.FromSeconds(Math.Min(Math.Max(3, timeout.TotalSeconds / 4), 10));
+        var initialProbe = await SendAndCaptureAsync(session, Environment.NewLine, probeBudget, cancellationToken).ConfigureAwait(false);
+        if (IsLoginPrompt(initialProbe))
+        {
+            AppendHistory(session, TerminalHistoryEntryKind.System, "Detected login prompt; attempting default login.");
+            return await TryLoginAsync(session, probeBudget, cancellationToken).ConfigureAwait(false);
+        }
+
+        var promptMarker = TryExtractShellPromptMarker(initialProbe);
+        if (!string.IsNullOrWhiteSpace(promptMarker))
+        {
+            return new CommandReadinessResult(true, promptMarker, string.Empty, initialProbe);
+        }
+
+        var followUpProbe = await SendAndCaptureAsync(session, Environment.NewLine, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+        promptMarker = TryExtractShellPromptMarker(followUpProbe);
+        return !string.IsNullOrWhiteSpace(promptMarker)
+            ? new CommandReadinessResult(true, promptMarker, string.Empty, initialProbe + followUpProbe)
+            : new CommandReadinessResult(false, string.Empty, "无法确认当前会话已经登录到命令行。", initialProbe + followUpProbe);
+    }
+
+    private async Task<CommandReadinessResult> TryLoginAsync(SessionState session, TimeSpan probeBudget, CancellationToken cancellationToken)
+    {
+        var loginOutput = await SendAndCaptureAsync(session, DefaultLoginUsername + Environment.NewLine, probeBudget, cancellationToken).ConfigureAwait(false);
+        var combinedOutput = loginOutput;
+
+        if (IsPasswordPrompt(loginOutput))
+        {
+            var passwordOutput = await SendAndCaptureAsync(session, DefaultLoginPassword + Environment.NewLine, probeBudget, cancellationToken).ConfigureAwait(false);
+            combinedOutput += passwordOutput;
+        }
+
+        var verificationOutput = await SendAndCaptureAsync(session, Environment.NewLine, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+        combinedOutput += verificationOutput;
+
+        if (IsLoginPrompt(verificationOutput) || IsLoginPrompt(combinedOutput) || IsPasswordPrompt(verificationOutput))
+        {
+            return new CommandReadinessResult(false, string.Empty, "当前设置无法正常登录。", combinedOutput);
+        }
+
+        var promptMarker = TryExtractShellPromptMarker(verificationOutput) ?? TryExtractShellPromptMarker(combinedOutput);
+        return !string.IsNullOrWhiteSpace(promptMarker)
+            ? new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput)
+            : new CommandReadinessResult(false, string.Empty, "登录后仍无法识别命令行提示符。", combinedOutput);
+    }
+
+    private static void BeginCommandCapture(SessionState session, string command, DateTime startedAt)
+    {
+        lock (session.SyncRoot)
+        {
+            session.ActiveCommandText = command;
+            session.ActiveCommandStartedAt = startedAt.ToString("O");
+            session.ActiveCommandBuffer = new StringBuilder();
+            session.LastCommandOutputAt = null;
+        }
+    }
+
+    private static string EndCommandCapture(SessionState session)
+    {
+        lock (session.SyncRoot)
+        {
+            var output = session.ActiveCommandBuffer?.ToString() ?? string.Empty;
+            session.ActiveCommandBuffer = null;
+            session.ActiveCommandText = string.Empty;
+            session.ActiveCommandStartedAt = string.Empty;
+            session.LastCommandOutputAt = null;
+            return output;
+        }
+    }
+
+    private static void ResetActiveCapture(SessionState session)
+    {
+        lock (session.SyncRoot)
+        {
+            session.ActiveCommandBuffer = null;
+            session.ActiveCommandText = string.Empty;
+            session.ActiveCommandStartedAt = string.Empty;
+            session.LastCommandOutputAt = null;
+        }
+    }
+
+    private async Task<string> SendAndCaptureAsync(SessionState session, string text, TimeSpan maxWait, CancellationToken cancellationToken)
+    {
+        BeginCommandCapture(session, string.Empty, DateTime.UtcNow);
+        try
+        {
+            await session.Backend.SendAsync(text, cancellationToken).ConfigureAwait(false);
+            await WaitForPromptProbeAsync(session, null, maxWait, cancellationToken).ConfigureAwait(false);
+            return EndCommandCapture(session);
+        }
+        finally
+        {
+            ResetActiveCapture(session);
+        }
+    }
+
+    private async Task<bool> WaitForCommandCompletionAsync(SessionState session, string promptMarker, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var startedAt = DateTime.UtcNow;
+        var quietWindow = TimeSpan.FromMilliseconds(700);
+        var emptyWait = TimeSpan.FromMilliseconds(900);
+        var promptProbeSent = false;
+
+        while (DateTime.UtcNow - startedAt < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(150, cancellationToken).ConfigureAwait(false);
+
+            var snapshot = GetActiveCommandSnapshot(session, out var lastOutputAt);
+            if (EndsWithShellPrompt(snapshot, promptMarker))
+            {
+                return false;
+            }
+
+            if (snapshot.Length == 0)
+            {
+                if (DateTime.UtcNow - startedAt >= emptyWait)
+                {
+                    promptProbeSent = true;
+                    await session.Backend.SendAsync(Environment.NewLine, cancellationToken).ConfigureAwait(false);
+                }
+
+                continue;
+            }
+
+            if (lastOutputAt.HasValue && DateTime.UtcNow - lastOutputAt.Value >= quietWindow && !promptProbeSent)
+            {
+                promptProbeSent = true;
+                await session.Backend.SendAsync(Environment.NewLine, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return !EndsWithShellPrompt(GetActiveCommandSnapshot(session, out _), promptMarker);
+    }
+
+    private async Task WaitForPromptProbeAsync(SessionState session, string? promptMarker, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var startedAt = DateTime.UtcNow;
+        var quietWindow = TimeSpan.FromMilliseconds(450);
+        var noOutputWindow = TimeSpan.FromMilliseconds(650);
+
+        while (DateTime.UtcNow - startedAt < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(120, cancellationToken).ConfigureAwait(false);
+
+            var snapshot = GetActiveCommandSnapshot(session, out var lastOutputAt);
+            if (!string.IsNullOrWhiteSpace(promptMarker) && EndsWithShellPrompt(snapshot, promptMarker))
+            {
+                return;
+            }
+
+            if (snapshot.Length == 0)
+            {
+                if (DateTime.UtcNow - startedAt >= noOutputWindow)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            if (lastOutputAt.HasValue && DateTime.UtcNow - lastOutputAt.Value >= quietWindow)
+            {
+                return;
+            }
+        }
+    }
+
+    private static string GetActiveCommandSnapshot(SessionState session, out DateTime? lastOutputAt)
+    {
+        lock (session.SyncRoot)
+        {
+            lastOutputAt = session.LastCommandOutputAt;
+            return session.ActiveCommandBuffer?.ToString() ?? string.Empty;
+        }
+    }
+
+    private static bool EndsWithShellPrompt(string text, string promptMarker)
+    {
+        var detectedPrompt = TryExtractShellPromptMarker(text);
+        return !string.IsNullOrWhiteSpace(detectedPrompt) && string.Equals(detectedPrompt, promptMarker, StringComparison.Ordinal);
+    }
+
+    private static string GetLastMeaningfulLine(string text)
+    {
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var line = lines[index].TrimEnd();
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                return line;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private readonly record struct CommandReadinessResult(bool Success, string PromptMarker, string Error, string Output);
 
     private sealed class SessionState
     {

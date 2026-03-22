@@ -28,6 +28,34 @@ public sealed class TerminalServicesTests
     }
 
     [Theory]
+    [InlineData("login:\n", true)]
+    [InlineData("LOGIN:\n", true)]
+    [InlineData("ok3568 ~ # ", false)]
+    public void TerminalSessionManager_IsLoginPrompt_DetectsExpectedTail(string text, bool expected)
+    {
+        Assert.Equal(expected, TerminalSessionManager.IsLoginPrompt(text));
+    }
+
+    [Theory]
+    [InlineData("password:\n", true)]
+    [InlineData("Password:\n", true)]
+    [InlineData("root@board:~# ", false)]
+    public void TerminalSessionManager_IsPasswordPrompt_DetectsExpectedTail(string text, bool expected)
+    {
+        Assert.Equal(expected, TerminalSessionManager.IsPasswordPrompt(text));
+    }
+
+    [Theory]
+    [InlineData("ok3568 ~ # ", "ok3568 ~ #")]
+    [InlineData("root@rk3588:~$ ", "root@rk3588:~$")]
+    [InlineData("login:\n", null)]
+    [InlineData("hardware info\n", null)]
+    public void TerminalSessionManager_TryExtractShellPromptMarker_RecognizesPromptLines(string text, string? expected)
+    {
+        Assert.Equal(expected, TerminalSessionManager.TryExtractShellPromptMarker(text));
+    }
+
+    [Theory]
     [InlineData("22", "COM1 @ 115200", "session-a", 2201)]
     [InlineData("22", "COM12 @ 115200", "session-b", 2212)]
     [InlineData("22", "ttyUSB105 @ 115200", "session-c", 2205)]

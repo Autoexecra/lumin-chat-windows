@@ -219,7 +219,7 @@ public sealed class TerminalExecApiConfig
     public int Port { get; set; } = 8765;
 
     [JsonPropertyName("default_timeout_s")]
-    public double DefaultTimeoutSeconds { get; set; } = 15;
+    public double DefaultTimeoutSeconds { get; set; } = 120;
 }
 
 public sealed class TerminalSerialBridgeConfig
@@ -240,7 +240,7 @@ public sealed class TerminalSerialBridgeConfig
     public string Password { get; set; } = string.Empty;
 
     [JsonPropertyName("exec_timeout_s")]
-    public double ExecTimeoutSeconds { get; set; } = 15;
+    public double ExecTimeoutSeconds { get; set; } = 120;
 
     [JsonPropertyName("host_key_path")]
     public string HostKeyPath { get; set; } = "~/.lumin-chat-win/terminal-serial-bridge-hostkey.pem";

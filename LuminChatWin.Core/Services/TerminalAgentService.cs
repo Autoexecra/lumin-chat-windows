@@ -332,6 +332,7 @@ public sealed class TerminalAgentService
             .AppendLine("- 当前终端是主要执行面，不要调用本机文件、git、本机 shell 等无关工具。")
             .AppendLine("- 只允许使用以下工具: run_shell_command、ssh_execute_command、ssh_list_directory、ssh_read_file、ssh_write_file、fetch_web_page、search_web、list_knowledge_documents、read_knowledge_document、write_knowledge_document。")
             .AppendLine("- run_shell_command 不是在本机 PowerShell 执行，而是把 command 放到当前终端会话窗口中执行。")
+            .AppendLine("- run_shell_command 默认超时是 120 秒；遇到下载、联网、主板硬件探测等可能阻塞较久的任务时，可把 timeout_seconds 提高到 1800 秒。")
             .AppendLine("- thinking 通过流式 reasoning 输出，content 通过流式正文输出。不要把 thinking 写进 content JSON。")
             .AppendLine("- 不要在正文里输出 thinking、content、tool_calls 这三个字面标签；thinking 走 reasoning 通道，content 只输出 JSON，tool_calls 只走工具调用字段。")
             .AppendLine("- content 必须始终是 JSON，并且只能包含这些字段: {\"complete\":bool,\"analysis\":string,\"final_message\":string}。")
@@ -412,7 +413,7 @@ public sealed class TerminalAgentService
             parameters["properties"] is Dictionary<string, object?> properties)
         {
             // The terminal agent only needs command text and timeout because execution always targets the selected terminal session.
-            runShellFunction["description"] = "Send a command to the current terminal session window for execution inside the app.";
+            runShellFunction["description"] = "Send a command to the current terminal session window for execution inside the app. Default timeout is 120 seconds and can be extended to 1800 seconds for long-running operations.";
             properties.Remove("cwd");
         }
 
