@@ -6,8 +6,8 @@
         Icon="Assets/Lumin-Chat图标.png"
         Width="1680"
         Height="980"
-        MinWidth="1380"
-        MinHeight="860"
+        MinWidth="980"
+        MinHeight="680"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="NavigationTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">

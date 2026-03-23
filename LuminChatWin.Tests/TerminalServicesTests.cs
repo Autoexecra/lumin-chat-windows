@@ -102,6 +102,75 @@ public sealed class TerminalServicesTests
     }
 
     [Fact]
+    public async Task TerminalSessionManager_ExecuteCommandAsync_PerformsLoginProbeAndQueuedCompletionProbe()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        await using var backend = new ScriptedTerminalBackend(
+        [
+            ("\n", "ok3568 login: "),
+            ("root\n", "Password: "),
+            ("Ncti2023\n", "\nok3568 ~ # "),
+            ("\n", "ok3568 ~ # "),
+            ("uname -a\n", "uname -a\nLinux ok3568 5.10 test\nok3568 ~ # \n"),
+            ("\n", "ok3568 ~ # \n"),
+        ]);
+        var session = await manager.CreateSessionForTestsAsync("scripted", TerminalSessionKind.Serial, "COM3 @ 115200", true, backend);
+
+        try
+        {
+            var result = await manager.ExecuteCommandAsync(session.SessionId, "uname -a", TimeSpan.FromSeconds(5));
+
+            Assert.True(result.Success);
+            Assert.False(result.TimedOut);
+            Assert.Contains("Linux ok3568", result.Output, StringComparison.Ordinal);
+            Assert.Equal(
+                ["\n", "root\n", "Ncti2023\n", "\n", "uname -a\n", "\n"],
+                backend.SentInputs);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalSessionManager_ExecuteCommandAsync_FailsAfterThreeLoginAttempts()
+    {
+        var config = AppConfig.CreateDefault();
+        config.Terminal.CommandExecution.MaxLoginAttempts = 3;
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        await using var backend = new ScriptedTerminalBackend(
+        [
+            ("\n", "ok3568 login: "),
+            ("root\n", "Password: "),
+            ("Ncti2023\n", "Login incorrect\nok3568 login: "),
+            ("\n", "ok3568 login: "),
+            ("\n", "ok3568 login: "),
+            ("root\n", "Password: "),
+            ("Ncti2023\n", "Login incorrect\nok3568 login: "),
+            ("\n", "ok3568 login: "),
+            ("\n", "ok3568 login: "),
+            ("root\n", "Password: "),
+            ("Ncti2023\n", "Login incorrect\nok3568 login: "),
+            ("\n", "ok3568 login: "),
+        ]);
+        var session = await manager.CreateSessionForTestsAsync("scripted-fail", TerminalSessionKind.Serial, "COM3 @ 115200", true, backend);
+
+        try
+        {
+            var result = await manager.ExecuteCommandAsync(session.SessionId, "uname -a", TimeSpan.FromSeconds(5));
+
+            Assert.False(result.Success);
+            Assert.Contains("无法正常登录", result.Error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
     public async Task TerminalApiServer_ReturnsSessionsAndCommandOutput()
     {
         var config = AppConfig.CreateDefault();
@@ -609,6 +678,62 @@ public sealed class TerminalServicesTests
             }
 
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class ScriptedTerminalBackend(IEnumerable<(string ExpectedInput, string Output)> script) : ITerminalBackend
+    {
+        private readonly Queue<(string ExpectedInput, string Output)> _script = new(script);
+
+        public List<string> SentInputs { get; } = [];
+
+        public event EventHandler<string>? OutputReceived;
+    #pragma warning disable CS0067
+        public event EventHandler<string>? ErrorReceived;
+    #pragma warning restore CS0067
+        public event EventHandler<string>? StatusReceived;
+
+        public bool IsConnected { get; private set; }
+
+        public string Descriptor => "scripted";
+
+        public Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            IsConnected = true;
+            StatusReceived?.Invoke(this, "scripted backend started\n");
+            return Task.CompletedTask;
+        }
+
+        public Task SendAsync(string text, CancellationToken cancellationToken = default)
+        {
+            SentInputs.Add(text);
+            Assert.True(_script.Count > 0, $"Unexpected input: {text}");
+            var next = _script.Dequeue();
+            Assert.Equal(next.ExpectedInput, text);
+            if (!string.IsNullOrEmpty(next.Output))
+            {
+                OutputReceived?.Invoke(this, next.Output);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task SendInterruptAsync(CancellationToken cancellationToken = default)
+        {
+            SentInputs.Add("<CTRL+C>");
+            OutputReceived?.Invoke(this, "^C\nok3568 ~ # \n");
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken = default)
+        {
+            IsConnected = false;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
         }
     }
 }

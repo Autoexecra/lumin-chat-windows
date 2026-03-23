@@ -22,6 +22,7 @@ public partial class SettingsWindow : Window
         BuildPrompts();
         BuildPolicy();
         BuildTerminal();
+        BuildCommandExecution();
         BuildSecondary();
         BuildKnowledge();
         BuildLicense();
@@ -71,6 +72,16 @@ public partial class SettingsWindow : Window
         AddTextBox(TerminalPanel, "serial_bridge_exec_timeout", "命令超时秒数", _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds.ToString("0.##"));
         AddTextBox(TerminalPanel, "serial_bridge_host_key_path", "Host Key 路径", _draft.Terminal.SerialSshBridge.HostKeyPath);
         AddInfoText(TerminalPanel, "标准 SSH 协议必须带用户名，无法真正做到完全无账号；当前实现支持用户名留空时接受任意用户名，密码留空时允许空密码。", new Thickness(0, 6, 0, 0));
+    }
+
+    private void BuildCommandExecution()
+    {
+        AddTextBox(CommandExecutionPanel, "command_login_username", "默认登录账号", _draft.Terminal.CommandExecution.LoginUsername);
+        AddTextBox(CommandExecutionPanel, "command_login_password", "默认登录密码（可留空）", _draft.Terminal.CommandExecution.LoginPassword);
+        AddTextBox(CommandExecutionPanel, "command_login_attempts", "最大登录尝试次数", _draft.Terminal.CommandExecution.MaxLoginAttempts.ToString());
+        AddTextBox(CommandExecutionPanel, "command_probe_timeout", "单次探测等待秒数", _draft.Terminal.CommandExecution.ProbeTimeoutSeconds.ToString("0.##"));
+        AddTextBox(CommandExecutionPanel, "command_prompt_pattern", "命令行提示符正则", _draft.Terminal.CommandExecution.PromptPattern);
+        AddInfoText(CommandExecutionPanel, "每次执行任务前都会先发一个 Enter 探测当前状态。如果最后一行是 login: 或 Password:，会按这里的账号密码最多尝试三次登录；登录成功后，再发一个 Enter 保存当前 shell prompt，执行命令后再追加一个 Enter，用它的响应来判断命令是否真正结束。", new Thickness(0, 6, 0, 0));
     }
 
     private void BuildSecondary()
@@ -151,6 +162,11 @@ public partial class SettingsWindow : Window
         _draft.Terminal.SerialSshBridge.Password = ReadText("serial_bridge_password", _draft.Terminal.SerialSshBridge.Password);
         _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds = ReadDouble("serial_bridge_exec_timeout", _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds);
         _draft.Terminal.SerialSshBridge.HostKeyPath = ReadText("serial_bridge_host_key_path", _draft.Terminal.SerialSshBridge.HostKeyPath);
+        _draft.Terminal.CommandExecution.LoginUsername = ReadText("command_login_username", _draft.Terminal.CommandExecution.LoginUsername);
+        _draft.Terminal.CommandExecution.LoginPassword = ReadText("command_login_password", _draft.Terminal.CommandExecution.LoginPassword);
+        _draft.Terminal.CommandExecution.MaxLoginAttempts = ReadInt("command_login_attempts", _draft.Terminal.CommandExecution.MaxLoginAttempts);
+        _draft.Terminal.CommandExecution.ProbeTimeoutSeconds = ReadDouble("command_probe_timeout", _draft.Terminal.CommandExecution.ProbeTimeoutSeconds);
+        _draft.Terminal.CommandExecution.PromptPattern = ReadText("command_prompt_pattern", _draft.Terminal.CommandExecution.PromptPattern);
 
         _draft.SecondaryServer.Enabled = ReadCheckBox("secondary_enabled", _draft.SecondaryServer.Enabled);
         _draft.SecondaryServer.Host = ReadText("secondary_host", _draft.SecondaryServer.Host);

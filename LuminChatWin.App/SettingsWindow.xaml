@@ -5,6 +5,8 @@
     Icon="Assets/Lumin-Chat图标.png"
         Width="1240"
         Height="860"
+        MinWidth="920"
+        MinHeight="640"
         WindowStartupLocation="CenterOwner">
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -25,6 +27,9 @@
                 </TabItem>
                 <TabItem Header="终端">
                     <ScrollViewer><StackPanel x:Name="TerminalPanel" Margin="20,0,0,0"/></ScrollViewer>
+                </TabItem>
+                <TabItem Header="登录与探测">
+                    <ScrollViewer><StackPanel x:Name="CommandExecutionPanel" Margin="20,0,0,0"/></ScrollViewer>
                 </TabItem>
                 <TabItem Header="辅助服务器">
                     <ScrollViewer><StackPanel x:Name="SecondaryPanel" Margin="20,0,0,0"/></ScrollViewer>

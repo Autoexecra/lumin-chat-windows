@@ -203,8 +203,29 @@ public sealed class TerminalFeatureConfig
     [JsonPropertyName("serial_ssh_bridge")]
     public TerminalSerialBridgeConfig SerialSshBridge { get; set; } = new();
 
+    [JsonPropertyName("command_execution")]
+    public TerminalCommandExecutionConfig CommandExecution { get; set; } = new();
+
     [JsonPropertyName("agent")]
     public TerminalAgentConfig Agent { get; set; } = new();
+}
+
+public sealed class TerminalCommandExecutionConfig
+{
+    [JsonPropertyName("login_username")]
+    public string LoginUsername { get; set; } = "root";
+
+    [JsonPropertyName("login_password")]
+    public string LoginPassword { get; set; } = "Ncti2023";
+
+    [JsonPropertyName("max_login_attempts")]
+    public int MaxLoginAttempts { get; set; } = 3;
+
+    [JsonPropertyName("probe_timeout_s")]
+    public double ProbeTimeoutSeconds { get; set; } = 3;
+
+    [JsonPropertyName("prompt_pattern")]
+    public string PromptPattern { get; set; } = @".+[#$>%]\s*$";
 }
 
 public sealed class TerminalExecApiConfig

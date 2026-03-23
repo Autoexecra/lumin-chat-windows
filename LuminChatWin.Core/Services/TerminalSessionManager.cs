@@ -12,8 +12,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     private static readonly Regex AnsiControlSequenceRegex = new("\\x1B\\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
     private static readonly Regex AnsiOperatingSystemCommandRegex = new("\\x1B\\][^\\a]*(\\a|\\x1B\\\\)", RegexOptions.Compiled);
     private static readonly Regex DescriptorNumberRegex = new("(\\d+)", RegexOptions.Compiled);
-    private const string DefaultLoginUsername = "root";
-    private const string DefaultLoginPassword = "Ncti2023";
+    private const string TerminalEnter = "\n";
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<TerminalFeatureConfig> _configAccessor;
     private readonly ConcurrentDictionary<string, SerialBridgeState> _bridges = new(StringComparer.OrdinalIgnoreCase);
@@ -140,6 +139,11 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         return await AddSessionAsync(options.Title, TerminalSessionKind.Serial, $"{options.PortName} @ {options.BaudRate}", true, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
+    internal Task<TerminalSessionInfo> CreateSessionForTestsAsync(string title, TerminalSessionKind kind, string descriptor, bool supportsBridge, ITerminalBackend backend, CancellationToken cancellationToken = default)
+    {
+        return AddSessionAsync(title, kind, descriptor, supportsBridge, false, false, backend, cancellationToken);
+    }
+
     public async Task SendInputAsync(string sessionId, string text, CancellationToken cancellationToken = default, bool recordInHistory = true)
     {
         var session = GetRequiredSession(sessionId);
@@ -172,22 +176,39 @@ public sealed class TerminalSessionManager : IAsyncDisposable
                 };
             }
 
+            var promptProbe = await ProbePromptAsync(session, cancellationToken).ConfigureAwait(false);
+            if (!promptProbe.Success)
+            {
+                return new TerminalCommandResult
+                {
+                    Success = false,
+                    TimedOut = false,
+                    Command = command,
+                    Output = promptProbe.Output.TrimEnd(),
+                    StartedAt = startedAt.ToString("O"),
+                    CompletedAt = DateTime.UtcNow.ToString("O"),
+                    Error = promptProbe.Error,
+                };
+            }
+
             AppendHistory(session, TerminalHistoryEntryKind.Command, command);
             BeginCommandCapture(session, command, startedAt);
 
-            await session.Backend.SendAsync(command + Environment.NewLine, cancellationToken).ConfigureAwait(false);
+            // Queue a second Enter after the command so the shell prompt response becomes an explicit completion marker.
+            await session.Backend.SendAsync(command + TerminalEnter, cancellationToken).ConfigureAwait(false);
+            await session.Backend.SendAsync(TerminalEnter, cancellationToken).ConfigureAwait(false);
 
-            var timedOut = await WaitForCommandCompletionAsync(session, readiness.PromptMarker, timeout, cancellationToken).ConfigureAwait(false);
+            var timedOut = await WaitForCommandCompletionAsync(session, promptProbe.PromptMarker, timeout, cancellationToken).ConfigureAwait(false);
 
             if (timedOut)
             {
                 await session.Backend.SendInterruptAsync(cancellationToken).ConfigureAwait(false);
                 AppendHistory(session, TerminalHistoryEntryKind.System, $"Command timed out after {timeout.TotalSeconds:F1}s; sent Ctrl+C.");
 
-                // Give the remote shell a short chance to surface the prompt again after Ctrl+C.
+                // After Ctrl+C, send one more Enter so the shell has a chance to re-emit the saved prompt.
                 await Task.Delay(250, cancellationToken).ConfigureAwait(false);
-                await session.Backend.SendAsync(Environment.NewLine, cancellationToken).ConfigureAwait(false);
-                await WaitForPromptProbeAsync(session, readiness.PromptMarker, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                await session.Backend.SendAsync(TerminalEnter, cancellationToken).ConfigureAwait(false);
+                await WaitForPromptProbeAsync(session, promptProbe.PromptMarker, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
             }
 
             var output = EndCommandCapture(session);
@@ -524,6 +545,11 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
     internal static string? TryExtractShellPromptMarker(string text)
     {
+        return TryExtractShellPromptMarker(text, @".+[#$>%]\s*$");
+    }
+
+    internal static string? TryExtractShellPromptMarker(string text, string promptPattern)
+    {
         var lastLine = GetLastMeaningfulLine(text);
         if (string.IsNullOrWhiteSpace(lastLine) || IsLoginPrompt(lastLine) || IsPasswordPrompt(lastLine))
         {
@@ -536,7 +562,17 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return null;
         }
 
-        return trimmed[^1] is '#' or '$' or '>' or '%' ? trimmed : null;
+        Regex promptRegex;
+        try
+        {
+            promptRegex = new Regex(promptPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        catch (ArgumentException)
+        {
+            promptRegex = new Regex(@".+[#$>%]\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        return promptRegex.IsMatch(trimmed) ? trimmed : null;
     }
 
     private static void ApplyTerminalChunk(SessionState session, string text)
@@ -623,50 +659,114 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
     private async Task<CommandReadinessResult> EnsureSessionReadyForCommandAsync(SessionState session, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var probeBudget = TimeSpan.FromSeconds(Math.Min(Math.Max(3, timeout.TotalSeconds / 4), 10));
-        var initialProbe = await SendAndCaptureAsync(session, Environment.NewLine, probeBudget, cancellationToken).ConfigureAwait(false);
-        if (IsLoginPrompt(initialProbe))
+        var executionConfig = Config.CommandExecution;
+        var maxAttempts = Math.Max(1, executionConfig.MaxLoginAttempts);
+        var probeBudget = ResolveProbeBudget(timeout, executionConfig);
+        var combinedOutput = new StringBuilder();
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
-            AppendHistory(session, TerminalHistoryEntryKind.System, "Detected login prompt; attempting default login.");
-            return await TryLoginAsync(session, probeBudget, cancellationToken).ConfigureAwait(false);
+            var probe = await SendAndCaptureAsync(session, TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
+            combinedOutput.Append(probe);
+
+            var promptMarker = TryExtractShellPromptMarker(probe, executionConfig.PromptPattern);
+            if (!string.IsNullOrWhiteSpace(promptMarker))
+            {
+                return new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput.ToString());
+            }
+
+            if (IsLoginPrompt(probe))
+            {
+                var loginResult = await TryLoginAsync(session, executionConfig, probeBudget, cancellationToken).ConfigureAwait(false);
+                combinedOutput.Append(loginResult.Output);
+                if (loginResult.Success)
+                {
+                    return new CommandReadinessResult(true, loginResult.PromptMarker, string.Empty, combinedOutput.ToString());
+                }
+
+                if (attempt == maxAttempts - 1)
+                {
+                    return new CommandReadinessResult(false, string.Empty, loginResult.Error, combinedOutput.ToString());
+                }
+
+                continue;
+            }
+
+            if (IsPasswordPrompt(probe))
+            {
+                var passwordResult = await CompletePasswordLoginAsync(session, executionConfig, probeBudget, cancellationToken).ConfigureAwait(false);
+                combinedOutput.Append(passwordResult.Output);
+                if (passwordResult.Success)
+                {
+                    return new CommandReadinessResult(true, passwordResult.PromptMarker, string.Empty, combinedOutput.ToString());
+                }
+            }
         }
 
-        var promptMarker = TryExtractShellPromptMarker(initialProbe);
-        if (!string.IsNullOrWhiteSpace(promptMarker))
-        {
-            return new CommandReadinessResult(true, promptMarker, string.Empty, initialProbe);
-        }
-
-        var followUpProbe = await SendAndCaptureAsync(session, Environment.NewLine, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
-        promptMarker = TryExtractShellPromptMarker(followUpProbe);
-        return !string.IsNullOrWhiteSpace(promptMarker)
-            ? new CommandReadinessResult(true, promptMarker, string.Empty, initialProbe + followUpProbe)
-            : new CommandReadinessResult(false, string.Empty, "无法确认当前会话已经登录到命令行。", initialProbe + followUpProbe);
+        return new CommandReadinessResult(false, string.Empty, "连续多次探测后仍未正确登录。", combinedOutput.ToString());
     }
 
-    private async Task<CommandReadinessResult> TryLoginAsync(SessionState session, TimeSpan probeBudget, CancellationToken cancellationToken)
+    private async Task<CommandReadinessResult> TryLoginAsync(SessionState session, TerminalCommandExecutionConfig executionConfig, TimeSpan probeBudget, CancellationToken cancellationToken)
     {
-        var loginOutput = await SendAndCaptureAsync(session, DefaultLoginUsername + Environment.NewLine, probeBudget, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(executionConfig.LoginUsername))
+        {
+            return new CommandReadinessResult(false, string.Empty, "当前处于 login: 界面，但未配置默认登录账号。", string.Empty);
+        }
+
+        var loginOutput = await SendAndCaptureAsync(session, executionConfig.LoginUsername + TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
         var combinedOutput = loginOutput;
+
+        if (TryExtractShellPromptMarker(loginOutput, executionConfig.PromptPattern) is string promptMarker)
+        {
+            return new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput);
+        }
 
         if (IsPasswordPrompt(loginOutput))
         {
-            var passwordOutput = await SendAndCaptureAsync(session, DefaultLoginPassword + Environment.NewLine, probeBudget, cancellationToken).ConfigureAwait(false);
-            combinedOutput += passwordOutput;
+            var passwordResult = await CompletePasswordLoginAsync(session, executionConfig, probeBudget, cancellationToken).ConfigureAwait(false);
+            return passwordResult with { Output = combinedOutput + passwordResult.Output };
         }
 
-        var verificationOutput = await SendAndCaptureAsync(session, Environment.NewLine, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+        var verificationOutput = await SendAndCaptureAsync(session, TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
+        combinedOutput += verificationOutput;
+        string? verifiedPromptMarker = TryExtractShellPromptMarker(verificationOutput, executionConfig.PromptPattern)
+            ?? TryExtractShellPromptMarker(combinedOutput, executionConfig.PromptPattern);
+        return !string.IsNullOrWhiteSpace(verifiedPromptMarker)
+            ? new CommandReadinessResult(true, verifiedPromptMarker, string.Empty, combinedOutput)
+            : new CommandReadinessResult(false, string.Empty, "输入登录账号后仍未进入命令行。", combinedOutput);
+    }
+
+    private async Task<CommandReadinessResult> CompletePasswordLoginAsync(SessionState session, TerminalCommandExecutionConfig executionConfig, TimeSpan probeBudget, CancellationToken cancellationToken)
+    {
+        var passwordOutput = await SendAndCaptureAsync(session, (executionConfig.LoginPassword ?? string.Empty) + TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
+        var combinedOutput = passwordOutput;
+        if (TryExtractShellPromptMarker(passwordOutput, executionConfig.PromptPattern) is string promptMarker)
+        {
+            return new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput);
+        }
+
+        var verificationOutput = await SendAndCaptureAsync(session, TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
         combinedOutput += verificationOutput;
 
-        if (IsLoginPrompt(verificationOutput) || IsLoginPrompt(combinedOutput) || IsPasswordPrompt(verificationOutput))
+        if (IsLoginPrompt(verificationOutput) || IsPasswordPrompt(verificationOutput))
         {
             return new CommandReadinessResult(false, string.Empty, "当前设置无法正常登录。", combinedOutput);
         }
 
-        var promptMarker = TryExtractShellPromptMarker(verificationOutput) ?? TryExtractShellPromptMarker(combinedOutput);
-        return !string.IsNullOrWhiteSpace(promptMarker)
-            ? new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput)
+        string? verifiedPromptMarker = TryExtractShellPromptMarker(verificationOutput, executionConfig.PromptPattern)
+            ?? TryExtractShellPromptMarker(combinedOutput, executionConfig.PromptPattern);
+        return !string.IsNullOrWhiteSpace(verifiedPromptMarker)
+            ? new CommandReadinessResult(true, verifiedPromptMarker, string.Empty, combinedOutput)
             : new CommandReadinessResult(false, string.Empty, "登录后仍无法识别命令行提示符。", combinedOutput);
+    }
+
+    private async Task<CommandReadinessResult> ProbePromptAsync(SessionState session, CancellationToken cancellationToken)
+    {
+        var probeOutput = await SendAndCaptureAsync(session, TerminalEnter, ResolveProbeBudget(TimeSpan.FromSeconds(Config.CommandExecution.ProbeTimeoutSeconds), Config.CommandExecution), cancellationToken).ConfigureAwait(false);
+        var promptMarker = TryExtractShellPromptMarker(probeOutput, Config.CommandExecution.PromptPattern);
+        return !string.IsNullOrWhiteSpace(promptMarker)
+            ? new CommandReadinessResult(true, promptMarker, string.Empty, probeOutput)
+            : new CommandReadinessResult(false, string.Empty, "执行命令前未能识别当前命令行提示符。", probeOutput);
     }
 
     private static void BeginCommandCapture(SessionState session, string command, DateTime startedAt)
@@ -722,9 +822,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     private async Task<bool> WaitForCommandCompletionAsync(SessionState session, string promptMarker, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var startedAt = DateTime.UtcNow;
-        var quietWindow = TimeSpan.FromMilliseconds(700);
-        var emptyWait = TimeSpan.FromMilliseconds(900);
-        var promptProbeSent = false;
+        var quietWindow = TimeSpan.FromMilliseconds(500);
 
         while (DateTime.UtcNow - startedAt < timeout)
         {
@@ -732,30 +830,19 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             await Task.Delay(150, cancellationToken).ConfigureAwait(false);
 
             var snapshot = GetActiveCommandSnapshot(session, out var lastOutputAt);
-            if (EndsWithShellPrompt(snapshot, promptMarker))
+            var promptCount = CountPromptOccurrences(snapshot, promptMarker);
+            if (promptCount >= 2)
             {
                 return false;
             }
 
-            if (snapshot.Length == 0)
+            if (promptCount >= 1 && lastOutputAt.HasValue && DateTime.UtcNow - lastOutputAt.Value >= quietWindow)
             {
-                if (DateTime.UtcNow - startedAt >= emptyWait)
-                {
-                    promptProbeSent = true;
-                    await session.Backend.SendAsync(Environment.NewLine, cancellationToken).ConfigureAwait(false);
-                }
-
-                continue;
-            }
-
-            if (lastOutputAt.HasValue && DateTime.UtcNow - lastOutputAt.Value >= quietWindow && !promptProbeSent)
-            {
-                promptProbeSent = true;
-                await session.Backend.SendAsync(Environment.NewLine, cancellationToken).ConfigureAwait(false);
+                return false;
             }
         }
 
-        return !EndsWithShellPrompt(GetActiveCommandSnapshot(session, out _), promptMarker);
+        return CountPromptOccurrences(GetActiveCommandSnapshot(session, out _), promptMarker) < 2;
     }
 
     private async Task WaitForPromptProbeAsync(SessionState session, string? promptMarker, TimeSpan timeout, CancellationToken cancellationToken)
@@ -770,7 +857,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             await Task.Delay(120, cancellationToken).ConfigureAwait(false);
 
             var snapshot = GetActiveCommandSnapshot(session, out var lastOutputAt);
-            if (!string.IsNullOrWhiteSpace(promptMarker) && EndsWithShellPrompt(snapshot, promptMarker))
+            if (!string.IsNullOrWhiteSpace(promptMarker) && CountPromptOccurrences(snapshot, promptMarker) >= 1)
             {
                 return;
             }
@@ -801,10 +888,23 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
-    private static bool EndsWithShellPrompt(string text, string promptMarker)
+    private static int CountPromptOccurrences(string text, string promptMarker)
     {
-        var detectedPrompt = TryExtractShellPromptMarker(text);
-        return !string.IsNullOrWhiteSpace(detectedPrompt) && string.Equals(detectedPrompt, promptMarker, StringComparison.Ordinal);
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(promptMarker))
+        {
+            return 0;
+        }
+
+        return text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Count(line => string.Equals(line.TrimEnd(), promptMarker, StringComparison.Ordinal));
+    }
+
+    private static TimeSpan ResolveProbeBudget(TimeSpan timeout, TerminalCommandExecutionConfig executionConfig)
+    {
+        var configuredSeconds = executionConfig.ProbeTimeoutSeconds > 0 ? executionConfig.ProbeTimeoutSeconds : 3;
+        return TimeSpan.FromSeconds(Math.Min(Math.Max(1, configuredSeconds), Math.Max(1, timeout.TotalSeconds)));
     }
 
     private static string GetLastMeaningfulLine(string text)
