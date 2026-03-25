@@ -473,6 +473,51 @@ public sealed class TerminalServicesTests
     }
 
     [Fact]
+    public async Task TerminalAgentService_IncludesCustomPromptAndDialogueContext()
+    {
+        var config = AppConfig.CreateDefault();
+        config.Prompts.SystemPromptTemplate = "系统追加内容";
+        config.Prompts.UserPromptTemplate = "用户追加内容\n{input}";
+        config.Prompts.PromptLibraryDir = CreateTempDirectory();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Prompt Context PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            var client = new CapturingTerminalAgentChatCompletionClient(new LlmResponse
+            {
+                Success = true,
+                Content = """
+                {"analysis":"已带上上下文。","complete":true,"final_message":"完成"}
+                """,
+            });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+            var dialogue = new List<TerminalAgentDialogueItem>
+            {
+                new() { Role = "system", Content = "资料库上下文 [read_knowledge_document]\n1: board information" },
+            };
+
+            var result = await service.RunLoopAsync(session.SessionId, "检查上下文拼接", dialogue, "auto", TerminalAgentMode.Prompt);
+
+            Assert.True(result.Success);
+            Assert.Contains("用户追加内容", client.LastUserPrompt, StringComparison.Ordinal);
+            Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("系统追加内容", StringComparison.Ordinal));
+            Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("资料库上下文", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
     public async Task TerminalAgentService_StopsExecutingRemainingToolsAfterFirstFailure()
     {
         var config = AppConfig.CreateDefault();
@@ -569,7 +614,7 @@ public sealed class TerminalServicesTests
             IPAddress.Loopback,
             port,
             config,
-            (_, _) => Task.CompletedTask,
+            (_, _) => Task.FromResult(true),
             () => string.Empty,
             (commandText, _, _) =>
             {
@@ -621,7 +666,7 @@ public sealed class TerminalServicesTests
                     receivedInput.Add(text);
                 }
                 receivedInputSignal.Set();
-                return Task.CompletedTask;
+                return Task.FromResult(true);
             },
             () => "cached-output\r\n",
             (_, _, _) => Task.FromResult(new TerminalCommandResult { Success = true }));
@@ -650,6 +695,43 @@ public sealed class TerminalServicesTests
 
         var shellOutput = ReadUntilContains(stream, "shell-output", TimeSpan.FromSeconds(5));
         Assert.Contains("shell-output", shellOutput, StringComparison.Ordinal);
+
+        client.Disconnect();
+    }
+
+    [Fact]
+    public async Task SerialSshBridgeServer_ShellSession_ShowsReadonlyNoticeWhenInputRejected()
+    {
+        var port = GetFreePort();
+        var config = new TerminalSerialBridgeConfig
+        {
+            Username = "root",
+            Password = "root",
+            HostKeyPath = Path.Combine(CreateTempDirectory(), "bridge-readonly-hostkey.pem"),
+        };
+
+        await using var bridge = new SerialSshBridgeServer(
+            "session-readonly",
+            "Demo Serial",
+            IPAddress.Loopback,
+            port,
+            config,
+            (_, _) => Task.FromResult(false),
+            () => string.Empty,
+            (_, _, _) => Task.FromResult(new TerminalCommandResult { Success = true }));
+
+        bridge.Start();
+
+        using var client = new SshClient("127.0.0.1", port, config.Username, config.Password);
+        client.Connect();
+        using var stream = client.CreateShellStream("xterm", 80, 24, 800, 600, 1024);
+
+        _ = ReadUntilContains(stream, "attached", TimeSpan.FromSeconds(5));
+        stream.Write("status\n");
+        stream.Flush();
+
+        var output = ReadUntilContains(stream, "暂时只读", TimeSpan.FromSeconds(5));
+        Assert.Contains("暂时只读", output, StringComparison.Ordinal);
 
         client.Disconnect();
     }
@@ -750,8 +832,11 @@ public sealed class TerminalServicesTests
 
         public string LastUserPrompt { get; private set; } = string.Empty;
 
+        public IReadOnlyList<PersistedChatMessage> LastMessages { get; private set; } = [];
+
         public Task<LlmResponse> CompleteAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, CancellationToken cancellationToken = default)
         {
+            LastMessages = messages.ToList();
             LastToolNames = tools?
                 .Select(static tool => tool.TryGetValue("function", out var functionObject) && functionObject is Dictionary<string, object?> function && function.TryGetValue("name", out var nameObject) ? nameObject?.ToString() ?? string.Empty : string.Empty)
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
@@ -762,6 +847,7 @@ public sealed class TerminalServicesTests
 
         public Task<LlmResponse> CompleteStreamingAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, Action<string>? onReasoningChunk = null, Action<string>? onContentChunk = null, CancellationToken cancellationToken = default)
         {
+            LastMessages = messages.ToList();
             LastToolNames = tools?
                 .Select(static tool => tool.TryGetValue("function", out var functionObject) && functionObject is Dictionary<string, object?> function && function.TryGetValue("name", out var nameObject) ? nameObject?.ToString() ?? string.Empty : string.Empty)
                 .Where(static name => !string.IsNullOrWhiteSpace(name))

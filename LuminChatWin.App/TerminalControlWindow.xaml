@@ -253,7 +253,7 @@
 
                             <StackPanel>
                                 <TextBlock Text="提示模式" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="这里只生成下一条建议命令。你手动点击执行后，会自动再次调用 LLM 继续规划。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="这里只生成下一条建议命令。需求会常驻，按 Enter 或在终端里执行回车后会自动继续规划。" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,14,0,12">
@@ -278,15 +278,15 @@
                             <StackPanel Grid.Row="2">
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,0,0,12">
                                     <StackPanel>
-                                        <TextBlock Text="发送需求" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="PromptRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10"/>
-                                        <Button Content="生成建议命令" Click="SendPromptRequest_Click"/>
+                                        <TextBlock Text="请输入需求" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="PromptRequestTextBox" AcceptsReturn="True" Height="110" TextWrapping="Wrap" Margin="0,10,0,10" PreviewKeyDown="PromptRequestTextBox_PreviewKeyDown"/>
+                                        <Button Content="清空需求" Click="ClearPromptObjective_Click"/>
                                     </StackPanel>
                                 </Border>
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
                                     <StackPanel>
                                         <TextBlock Text="建议指令" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="PromptSuggestedCommandTextBox" AcceptsReturn="True" Height="88" TextWrapping="Wrap" Margin="0,10,0,10"/>
+                                        <TextBox x:Name="PromptSuggestedCommandTextBox" AcceptsReturn="True" Height="88" TextWrapping="Wrap" Margin="0,10,0,10" IsReadOnly="True" Background="#FFE6E6E6" Foreground="#FF4F4F4F"/>
                                         <Button Content="执行建议指令" Style="{StaticResource SubtleButtonStyle}" Click="ExecutePromptCommand_Click"/>
                                     </StackPanel>
                                 </Border>

@@ -28,6 +28,7 @@ public sealed class TerminalAgentService
     private readonly Func<AppConfig> _configAccessor;
     private readonly TerminalSessionManager _sessionManager;
     private readonly Func<string> _workspaceRootAccessor;
+    private const int DialogueContextLimit = 24;
 
     /// <summary>
     /// Creates a terminal agent service bound to the current configuration and session manager.
@@ -176,12 +177,18 @@ public sealed class TerminalAgentService
                 Role = "system",
                 Content = BuildSystemPrompt(config, session),
             },
-            new()
-            {
-                Role = "user",
-                Content = BuildUserPrompt(session, objective, _sessionManager.GetRecentOutput(session.SessionId, 10000)),
-            },
         };
+
+        foreach (var dialogueMessage in BuildDialogueMessages(dialogue))
+        {
+            messages.Add(dialogueMessage);
+        }
+
+        messages.Add(new PersistedChatMessage
+        {
+            Role = "user",
+            Content = PromptTemplateService.ApplyUserPromptTemplate(config, BuildUserPrompt(session, objective, _sessionManager.GetRecentOutput(session.SessionId, 10000))),
+        });
 
         while (true)
         {
@@ -329,6 +336,8 @@ public sealed class TerminalAgentService
                     Content = result.Output,
                 });
 
+                TrackKnowledgeContext(dialogue, toolCall.Name, result);
+
                 if (!result.Ok)
                 {
                     shouldReplan = true;
@@ -405,6 +414,14 @@ public sealed class TerminalAgentService
                 .AppendLine($"- 本地缓存目录: {ConfigService.ExpandPath(config.KnowledgeBase.LocalCacheDir)}")
                 .AppendLine();
         }
+
+            var customSystemPrompt = PromptTemplateService.ResolveSystemPromptTemplate(config).Trim();
+            if (!string.IsNullOrWhiteSpace(customSystemPrompt))
+            {
+                builder.AppendLine("系统提示词追加:")
+                .AppendLine(customSystemPrompt)
+                .AppendLine();
+            }
 
         return builder.ToString();
     }
@@ -562,6 +579,57 @@ public sealed class TerminalAgentService
     {
         var output = string.IsNullOrWhiteSpace(result.Output) ? "<empty>" : result.Output;
         return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
+    }
+
+    private static IReadOnlyList<PersistedChatMessage> BuildDialogueMessages(IList<TerminalAgentDialogueItem> dialogue)
+    {
+        return dialogue
+            .TakeLast(DialogueContextLimit)
+            .Where(item => !string.IsNullOrWhiteSpace(item.Content))
+            .Select(item => new PersistedChatMessage
+            {
+                Role = NormalizeDialogueRole(item.Role),
+                Content = item.Content,
+            })
+            .ToList();
+    }
+
+    private static string NormalizeDialogueRole(string role)
+    {
+        return role switch
+        {
+            "agent" => "assistant",
+            "assistant" => "assistant",
+            "system" => "system",
+            _ => "user",
+        };
+    }
+
+    private static void TrackKnowledgeContext(IList<TerminalAgentDialogueItem> dialogue, string toolName, ToolExecutionResult result)
+    {
+        if (!result.Ok)
+        {
+            return;
+        }
+
+        if (!string.Equals(toolName, "list_knowledge_documents", StringComparison.Ordinal) &&
+            !string.Equals(toolName, "read_knowledge_document", StringComparison.Ordinal) &&
+            !string.Equals(toolName, "write_knowledge_document", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var content = $"资料库上下文 [{toolName}]\n{result.Output}";
+        if (dialogue.Any(item => string.Equals(item.Role, "system", StringComparison.Ordinal) && string.Equals(item.Content, content, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        dialogue.Add(new TerminalAgentDialogueItem
+        {
+            Role = "system",
+            Content = content,
+        });
     }
 
     /// <summary>

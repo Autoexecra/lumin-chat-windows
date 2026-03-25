@@ -10,7 +10,7 @@ namespace LuminChatWin.Core.Services;
 internal sealed class SerialSshBridgeServer : IAsyncDisposable
 {
     private readonly SshServer _server;
-    private readonly Func<string, CancellationToken, Task> _sendInputAsync;
+    private readonly Func<string, CancellationToken, Task<bool>> _sendInputAsync;
     private readonly Func<string, TimeSpan, CancellationToken, Task<TerminalCommandResult>> _executeCommandAsync;
     private readonly Func<string> _recentOutputAccessor;
     private readonly ConcurrentDictionary<int, ShellConnection> _shells = new();
@@ -28,7 +28,7 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
         IPAddress bindAddress,
         int port,
         TerminalSerialBridgeConfig config,
-        Func<string, CancellationToken, Task> sendInputAsync,
+        Func<string, CancellationToken, Task<bool>> sendInputAsync,
         Func<string> recentOutputAccessor,
         Func<string, TimeSpan, CancellationToken, Task<TerminalCommandResult>> executeCommandAsync)
     {
@@ -56,8 +56,10 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
             Port = port,
             Protocol = "ssh",
             Message = string.IsNullOrWhiteSpace(_username)
-                ? $"Use ssh -p {port} <username>@{bindAddress} (any username, empty password by default)."
-                : $"Use ssh -p {port} {_username}@{bindAddress}.",
+                ? $"Use ssh -p {port} <username>@{bindAddress} (any username, empty password allowed by default)."
+                : string.IsNullOrEmpty(_password)
+                    ? $"Use ssh -p {port} {_username}@{bindAddress} and press Enter at the password prompt."
+                    : $"Use ssh -p {port} {_username}@{bindAddress}.",
         };
     }
 
@@ -251,11 +253,12 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
     {
         private readonly int _shellId;
         private readonly SessionChannel _channel;
-        private readonly Func<string, CancellationToken, Task> _sendInputAsync;
+        private readonly Func<string, CancellationToken, Task<bool>> _sendInputAsync;
         private readonly Action<int> _disposeCallback;
+        private DateTime _lastReadonlyNoticeAt = DateTime.MinValue;
         private bool _disposed;
 
-        public ShellConnection(int shellId, SessionChannel channel, Func<string, CancellationToken, Task> sendInputAsync, Action<int> disposeCallback)
+        public ShellConnection(int shellId, SessionChannel channel, Func<string, CancellationToken, Task<bool>> sendInputAsync, Action<int> disposeCallback)
         {
             _shellId = shellId;
             _channel = channel;
@@ -304,7 +307,19 @@ internal sealed class SerialSshBridgeServer : IAsyncDisposable
                 return;
             }
 
-            _ = _sendInputAsync(Encoding.Latin1.GetString(data), CancellationToken.None);
+            _ = ForwardInputAsync(Encoding.Latin1.GetString(data));
+        }
+
+        private async Task ForwardInputAsync(string text)
+        {
+            var accepted = await _sendInputAsync(text, CancellationToken.None).ConfigureAwait(false);
+            if (accepted || DateTime.UtcNow - _lastReadonlyNoticeAt < TimeSpan.FromSeconds(1))
+            {
+                return;
+            }
+
+            _lastReadonlyNoticeAt = DateTime.UtcNow;
+            SendOutput(Encoding.UTF8.GetBytes("\r\n[luminTerminal] 主窗口最近 5 秒内有输入，当前 SSH 共享暂时只读。\r\n"));
         }
 
         private void Channel_CloseReceived(object? sender, EventArgs e)

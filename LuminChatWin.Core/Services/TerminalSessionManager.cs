@@ -12,6 +12,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     private static readonly Regex AnsiControlSequenceRegex = new("\\x1B\\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
     private static readonly Regex AnsiOperatingSystemCommandRegex = new("\\x1B\\][^\\a]*(\\a|\\x1B\\\\)", RegexOptions.Compiled);
     private const string TerminalEnter = "\n";
+    private static readonly TimeSpan BridgeInputProtectionWindow = TimeSpan.FromSeconds(5);
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<TerminalFeatureConfig> _configAccessor;
     private readonly ConcurrentDictionary<string, SerialBridgeState> _bridges = new(StringComparer.OrdinalIgnoreCase);
@@ -146,11 +147,27 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     public async Task SendInputAsync(string sessionId, string text, CancellationToken cancellationToken = default, bool recordInHistory = true)
     {
         var session = GetRequiredSession(sessionId);
+        MarkLocalInput(session);
         await session.Backend.SendAsync(text, cancellationToken).ConfigureAwait(false);
         if (recordInHistory)
         {
             AppendHistory(session, TerminalHistoryEntryKind.Command, text.TrimEnd('\r', '\n'));
         }
+    }
+
+    internal async Task<bool> TrySendBridgeInputAsync(string sessionId, string text, CancellationToken cancellationToken = default)
+    {
+        var session = GetRequiredSession(sessionId);
+        lock (session.SyncRoot)
+        {
+            if (session.LocalInputProtectedUntilUtc > DateTime.UtcNow)
+            {
+                return false;
+            }
+        }
+
+        await session.Backend.SendAsync(text, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     public async Task<TerminalCommandResult> ExecuteCommandAsync(string sessionId, string command, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -176,6 +193,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             }
 
             AppendHistory(session, TerminalHistoryEntryKind.Command, command);
+            MarkLocalInput(session);
             BeginCommandCapture(session, command, startedAt);
 
             // Queue a second Enter after the command so the shell prompt response becomes an explicit completion marker.
@@ -276,7 +294,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             bindAddress,
             port,
             config.SerialSshBridge,
-            (text, token) => session.Backend.SendAsync(text, token),
+            (text, token) => TrySendBridgeInputAsync(sessionId, text, token),
             () => GetRecentRawOutput(sessionId, 16000),
             (commandText, timeout, token) => ExecuteCommandAsync(sessionId, commandText, timeout, token));
 
@@ -449,6 +467,14 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             IsApiShared = source.IsApiShared,
             IsSshShared = source.IsSshShared,
         };
+    }
+
+    private static void MarkLocalInput(SessionState session)
+    {
+        lock (session.SyncRoot)
+        {
+            session.LocalInputProtectedUntilUtc = DateTime.UtcNow + BridgeInputProtectionWindow;
+        }
     }
 
     private int ResolveBridgePort(TerminalSessionInfo info)
@@ -1038,6 +1064,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         public DateTime? LastCommandOutputAt { get; set; }
         public int CurrentLineStartIndex { get; set; }
         public bool PendingCarriageReturn { get; set; }
+        public DateTime LocalInputProtectedUntilUtc { get; set; } = DateTime.MinValue;
     }
 
     private sealed class SerialBridgeState : IAsyncDisposable

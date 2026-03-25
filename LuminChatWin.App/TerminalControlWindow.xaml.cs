@@ -28,6 +28,7 @@ public partial class TerminalControlWindow : Window
     private TerminalSessionKind? _loadedProfileKind;
     private string? _loadedProfileDescriptor;
     private bool _agentBusy;
+    private bool _promptPlanningQueued;
     private double _lastExpandedNavigationPaneWidth = ExpandedNavigationPaneWidth;
 
     public TerminalControlWindow(AppRuntime runtime)
@@ -444,54 +445,7 @@ public partial class TerminalControlWindow : Window
 
     private async void SendPromptRequest_Click(object sender, RoutedEventArgs e)
     {
-        if (_agentBusy)
-        {
-            return;
-        }
-
-        var request = PromptRequestTextBox.Text.Trim();
-        var targetSessionId = GetPromptTargetSessionId();
-        if (string.IsNullOrWhiteSpace(request))
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(targetSessionId))
-        {
-            MessageBox.Show(this, "请先选择一个打开中的终端会话。", "提示模式", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        try
-        {
-            _agentBusy = true;
-            _promptObjective = request;
-            _promptDialogue.Clear();
-            _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
-            AddAgentTimeline("user", $"[提示模式] {request}");
-            PromptRequestTextBox.Clear();
-            SetRequestStatus(PromptStatusTextBlock, request);
-            PromptSummaryTextBlock.Text = $"目标会话：{targetSessionId} | 模型：{GetPromptSelectedModelKey()}";
-
-            var plan = await _runtime.TerminalAgent.RunLoopAsync(
-                targetSessionId,
-                _promptObjective,
-                _promptDialogue,
-                GetPromptSelectedModelKey(),
-                TerminalAgentMode.Prompt,
-                CreateAgentProgress());
-
-            ApplyPromptPlan(plan);
-        }
-        catch (Exception ex)
-        {
-            ResetRequestStatus(PromptStatusTextBlock);
-            ShowError(ex);
-        }
-        finally
-        {
-            _agentBusy = false;
-        }
+        await RequestPromptSuggestionAsync();
     }
 
     private async void ExecutePromptCommand_Click(object sender, RoutedEventArgs e)
@@ -541,6 +495,28 @@ public partial class TerminalControlWindow : Window
         {
             _agentBusy = false;
         }
+    }
+
+    private async void PromptRequestTextBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await RequestPromptSuggestionAsync();
+    }
+
+    private void ClearPromptObjective_Click(object sender, RoutedEventArgs e)
+    {
+        _promptObjective = string.Empty;
+        _promptDialogue.Clear();
+        PromptRequestTextBox.Clear();
+        PromptSuggestedCommandTextBox.Clear();
+        ResetRequestStatus(PromptStatusTextBlock);
+        PromptSummaryTextBlock.Text = "未开始执行。输入需求并按 Enter 后，会生成下一条建议命令。";
+        SetWindowStatus("已清空提示模式需求。", isMuted: true);
     }
 
     private async void SaveSharingSettings_Click(object sender, RoutedEventArgs e)
@@ -744,6 +720,10 @@ public partial class TerminalControlWindow : Window
         {
             await _runtime.TerminalSessions.SendInputAsync(sessionId, text, recordInHistory: false);
             SetWindowStatus($"已向终端发送输入：{DescribeInput(text)}", isMuted: true);
+            if (text.Contains('\n'))
+            {
+                _ = RequestPromptSuggestionAsync(sessionId, triggeredByTerminalInput: true);
+            }
         }
         catch (Exception ex)
         {
@@ -829,7 +809,7 @@ public partial class TerminalControlWindow : Window
                     Host = profile.Host,
                     Port = profile.Port,
                     Username = profile.Username,
-                    Password = profile.Password,
+                    Password = ResolveSshPassword(profile),
                     ApiShared = profile.ApiShared,
                     SshShared = profile.SshShared,
                 }),
@@ -1195,6 +1175,101 @@ public partial class TerminalControlWindow : Window
         PromptSuggestedCommandTextBox.Text = plan.SuggestedCommand;
         ResetRequestStatus(PromptStatusTextBlock);
         PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand) ? "本轮未生成命令。" : $"待手动执行：{plan.SuggestedCommand}";
+    }
+
+    private async Task RequestPromptSuggestionAsync(string? targetSessionId = null, bool triggeredByTerminalInput = false)
+    {
+        if (_agentBusy || _promptPlanningQueued)
+        {
+            return;
+        }
+
+        var request = PromptRequestTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(request))
+        {
+            if (!triggeredByTerminalInput)
+            {
+                PromptSummaryTextBlock.Text = "请输入需求后再触发提示模式。";
+            }
+
+            return;
+        }
+
+        var selectedSessionId = targetSessionId ?? GetPromptTargetSessionId();
+        if (string.IsNullOrWhiteSpace(selectedSessionId))
+        {
+            if (!triggeredByTerminalInput)
+            {
+                MessageBox.Show(this, "请先选择一个打开中的终端会话。", "提示模式", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+
+            return;
+        }
+
+        if (triggeredByTerminalInput)
+        {
+            var promptTarget = GetPromptTargetSessionId();
+            if (!string.Equals(promptTarget, selectedSessionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            _promptPlanningQueued = true;
+            _agentBusy = true;
+
+            if (!string.Equals(_promptObjective, request, StringComparison.Ordinal))
+            {
+                _promptObjective = request;
+                _promptDialogue.Clear();
+                _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
+                AddAgentTimeline("user", $"[提示模式] {request}");
+            }
+            else if (_promptDialogue.Count == 0)
+            {
+                _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
+            }
+
+            SetRequestStatus(PromptStatusTextBlock, request);
+            PromptSummaryTextBlock.Text = $"目标会话：{selectedSessionId} | 模型：{GetPromptSelectedModelKey()}";
+
+            var plan = await _runtime.TerminalAgent.RunLoopAsync(
+                selectedSessionId,
+                _promptObjective,
+                _promptDialogue,
+                GetPromptSelectedModelKey(),
+                TerminalAgentMode.Prompt,
+                CreateAgentProgress());
+
+            ApplyPromptPlan(plan);
+        }
+        catch (Exception ex)
+        {
+            ResetRequestStatus(PromptStatusTextBlock);
+            ShowError(ex);
+        }
+        finally
+        {
+            _agentBusy = false;
+            _promptPlanningQueued = false;
+        }
+    }
+
+    private string ResolveSshPassword(TerminalSessionProfile profile)
+    {
+        if (!string.IsNullOrWhiteSpace(profile.Password))
+        {
+            return profile.Password;
+        }
+
+        var dialog = new TextPromptWindow("SSH 密码", $"连接 {profile.Username}@{profile.Host}:{profile.Port}\n未保存密码，输入密码后继续。\n留空则尝试空密码。", string.Empty)
+        {
+            Owner = this,
+        };
+
+        return dialog.ShowDialog() == true ? dialog.ResponseText : string.Empty;
     }
 
     private static void SetRequestStatus(TextBlock target, string request)
