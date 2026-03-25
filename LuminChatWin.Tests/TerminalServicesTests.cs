@@ -55,6 +55,16 @@ public sealed class TerminalServicesTests
         Assert.Equal(expected, TerminalSessionManager.TryExtractShellPromptMarker(text));
     }
 
+    [Fact]
+    public void TerminalSessionManager_TryExtractShellPromptMarker_SupportsMultiplePromptPatterns()
+    {
+        var marker = TerminalSessionManager.TryExtractShellPromptMarker(
+            "root@rk3588:~# ",
+            [@"not-a-match$", @"root@.+#\s*$"]);
+
+        Assert.Equal("root@rk3588:~#", marker);
+    }
+
     [Theory]
     [InlineData("22", "COM1 @ 115200", "session-a", 2201)]
     [InlineData("22", "COM12 @ 115200", "session-b", 2212)]
@@ -111,7 +121,6 @@ public sealed class TerminalServicesTests
             ("\n", "ok3568 login: "),
             ("root\n", "Password: "),
             ("Ncti2023\n", "\nok3568 ~ # "),
-            ("\n", "ok3568 ~ # "),
             ("uname -a\n", "uname -a\nLinux ok3568 5.10 test\nok3568 ~ # \n"),
             ("\n", "ok3568 ~ # \n"),
         ]);
@@ -124,9 +133,7 @@ public sealed class TerminalServicesTests
             Assert.True(result.Success);
             Assert.False(result.TimedOut);
             Assert.Contains("Linux ok3568", result.Output, StringComparison.Ordinal);
-            Assert.Equal(
-                ["\n", "root\n", "Ncti2023\n", "\n", "uname -a\n", "\n"],
-                backend.SentInputs);
+            Assert.Equal(["\n", "root\n", "Ncti2023\n", "uname -a\n", "\n"], backend.SentInputs);
         }
         finally
         {
@@ -163,6 +170,36 @@ public sealed class TerminalServicesTests
 
             Assert.False(result.Success);
             Assert.Contains("无法正常登录", result.Error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalSessionManager_ExecuteCommandAsync_UsesPromptProbeAfterTimeoutBeforeInterrupting()
+    {
+        var config = AppConfig.CreateDefault();
+        config.Terminal.CommandExecution.ProbeTimeoutSeconds = 1;
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        await using var backend = new ScriptedTerminalBackend(
+        [
+            ("\n", "root@rk3588:~# "),
+            ("sleep 99\n", "sleep 99\n"),
+            ("\n", string.Empty),
+            ("\n", "root@rk3588:~# \n"),
+        ]);
+        var session = await manager.CreateSessionForTestsAsync("scripted-timeout-probe", TerminalSessionKind.Serial, "COM3 @ 115200", true, backend);
+
+        try
+        {
+            var result = await manager.ExecuteCommandAsync(session.SessionId, "sleep 99", TimeSpan.FromSeconds(1));
+
+            Assert.True(result.Success);
+            Assert.False(result.TimedOut);
+            Assert.DoesNotContain("<CTRL+C>", backend.SentInputs, StringComparer.Ordinal);
+            Assert.Equal(["\n", "sleep 99\n", "\n", "\n"], backend.SentInputs);
         }
         finally
         {
@@ -421,6 +458,63 @@ public sealed class TerminalServicesTests
             Assert.True(result.Success);
             Assert.Contains("transcript-only", client.LastUserPrompt, StringComparison.Ordinal);
             Assert.DoesNotContain("this-should-not-appear", client.LastUserPrompt, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalAgentService_StopsExecutingRemainingToolsAfterFirstFailure()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Failure Stop PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            var client = new FakeTerminalAgentChatCompletionClient(
+                new LlmResponse
+                {
+                    Success = true,
+                    Content = """
+                    {"analysis":"先尝试两个工具。","complete":false,"final_message":""}
+                    """,
+                    ToolCalls =
+                    [
+                        new ToolCall("call-1", "ssh_execute_command", new Dictionary<string, object?>
+                        {
+                            ["command"] = "uname -a",
+                        }),
+                        new ToolCall("call-2", "run_shell_command", new Dictionary<string, object?>
+                        {
+                            ["command"] = "Write-Output 'should-not-run'",
+                        }),
+                    ],
+                },
+                new LlmResponse
+                {
+                    Success = true,
+                    Content = """
+                    {"analysis":"收到失败结果后停止后续工具。","complete":true,"final_message":"已处理失败"}
+                    """,
+                });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+
+            var result = await service.RunLoopAsync(session.SessionId, "验证失败后停止后续工具", [], "auto", TerminalAgentMode.Auto);
+
+            Assert.True(result.Success);
+            Assert.True(result.Completed);
+            Assert.Equal("已处理失败", result.FinalMessage);
+            Assert.DoesNotContain("should-not-run", manager.GetRecentOutput(session.SessionId, 4000), StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

@@ -224,8 +224,22 @@ public sealed class TerminalCommandExecutionConfig
     [JsonPropertyName("probe_timeout_s")]
     public double ProbeTimeoutSeconds { get; set; } = 3;
 
+    [JsonPropertyName("prompt_patterns")]
+    public List<string> PromptPatterns { get; set; } = [@".+[#$>%]\s*$"];
+
     [JsonPropertyName("prompt_pattern")]
-    public string PromptPattern { get; set; } = @".+[#$>%]\s*$";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyPromptPattern
+    {
+        get => null;
+        set
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                PromptPatterns = [value];
+            }
+        }
+    }
 }
 
 public sealed class TerminalExecApiConfig

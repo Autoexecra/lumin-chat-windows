@@ -4,6 +4,10 @@ using LuminChatWin.Core.Models;
 
 namespace LuminChatWin.Core.Services;
 
+/// <summary>
+/// Coordinates the terminal-focused agent loop, exposing only the tools that are safe for the active session
+/// and feeding execution results back into the model until the task completes or requires user input.
+/// </summary>
 public sealed class TerminalAgentService
 {
     private static readonly HashSet<string> AllowedToolNames =
@@ -25,6 +29,9 @@ public sealed class TerminalAgentService
     private readonly TerminalSessionManager _sessionManager;
     private readonly Func<string> _workspaceRootAccessor;
 
+    /// <summary>
+    /// Creates a terminal agent service bound to the current configuration and session manager.
+    /// </summary>
     public TerminalAgentService(IChatCompletionClient chatClient, Func<AppConfig> configAccessor, TerminalSessionManager sessionManager, Func<string> workspaceRootAccessor)
     {
         _chatClient = chatClient;
@@ -33,6 +40,10 @@ public sealed class TerminalAgentService
         _workspaceRootAccessor = workspaceRootAccessor;
     }
 
+    /// <summary>
+    /// Runs the full agent loop for the selected terminal session until the task completes, stops for input,
+    /// or reaches the configured round limit.
+    /// </summary>
     public async Task<TerminalAgentPlan> RunLoopAsync(
         string sessionId,
         string objective,
@@ -125,6 +136,9 @@ public sealed class TerminalAgentService
         };
     }
 
+    /// <summary>
+    /// Executes a single externally-invoked planning step by reusing the main loop with either prompt or auto mode.
+    /// </summary>
     public async Task<TerminalAgentPlan> RunStepAsync(
         string sessionId,
         string objective,
@@ -221,6 +235,7 @@ public sealed class TerminalAgentService
             }
 
             messages.Add(BuildAssistantToolCallMessage(response));
+            var shouldReplan = false;
             foreach (var toolCall in response.ToolCalls)
             {
                 progress?.Report(new AgentEvent
@@ -249,10 +264,10 @@ public sealed class TerminalAgentService
                         Name = toolCall.Name,
                         Content = blocked.Output,
                     });
-                    continue;
+                    shouldReplan = true;
+                    break;
                 }
 
-                // In prompt mode, run_shell_command becomes a suggestion instead of executing immediately.
                 if (string.Equals(toolCall.Name, "run_shell_command", StringComparison.Ordinal))
                 {
                     var command = GetRequiredString(toolCall.Arguments, "command");
@@ -286,6 +301,13 @@ public sealed class TerminalAgentService
                         Name = toolCall.Name,
                         Content = commandResult.Output,
                     });
+
+                    if (!commandResult.Ok)
+                    {
+                        shouldReplan = true;
+                        break;
+                    }
+
                     continue;
                 }
 
@@ -306,10 +328,24 @@ public sealed class TerminalAgentService
                     Name = toolCall.Name,
                     Content = result.Output,
                 });
+
+                if (!result.Ok)
+                {
+                    shouldReplan = true;
+                    break;
+                }
+            }
+
+            if (!shouldReplan)
+            {
+                continue;
             }
         }
     }
 
+    /// <summary>
+    /// Resolves the agent model level from an explicit selection or the terminal defaults.
+    /// </summary>
     private static int ResolveModelLevel(AppConfig config, string? selectedModel)
     {
         if (!string.IsNullOrWhiteSpace(selectedModel) &&
@@ -322,17 +358,22 @@ public sealed class TerminalAgentService
         return Math.Max(1, config.Terminal.Agent.DefaultModelLevel > 0 ? config.Terminal.Agent.DefaultModelLevel : config.App.DefaultModelLevel);
     }
 
+    /// <summary>
+    /// Builds the system instructions that constrain the agent to terminal-centric execution.
+    /// </summary>
     private static string BuildSystemPrompt(AppConfig config, TerminalSessionInfo session)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("你是串口终端执行代理。目标是控制当前终端会话，持续规划直到任务完成。")
-            .AppendLine("你的职责是：根据用户提出的执行需求。先分析当前终端窗口内容，再决定下一条终端命令，生成的指令会放到当前会话窗口中执行，当前会话窗口可能是串口终端或者ssh终端。执行前会调用资料库或者网页搜索相关资料。")
+        builder.AppendLine("你是串口终端执行机器人。目标是控制当前会话终端，持续规划直到任务完成。")
+            .AppendLine("你的职责是：根据用户提出的执行需求。先分析当前终端窗口内容，再决定下一条终端命令，在当前会话窗口中执行的指令统一调用run_shell_command工具，一次可以执行1到5条命令。")
             .AppendLine()
             .AppendLine("强约束:")
             .AppendLine("- 当前终端是主要执行面，不要调用本机文件、git、本机 shell 等无关工具。")
-            .AppendLine("- 只允许使用以下工具: run_shell_command、ssh_execute_command、ssh_list_directory、ssh_read_file、ssh_write_file、fetch_web_page、search_web、list_knowledge_documents、read_knowledge_document、write_knowledge_document。")
-            .AppendLine("- run_shell_command 不是在本机 PowerShell 执行，而是把 command 放到当前终端会话窗口中执行。")
+            .AppendLine("- run_shell_command 不是在本机 PowerShell 执行，而是把 command 放到当前会话终端中执行。")
             .AppendLine("- run_shell_command 默认超时是 120 秒；遇到下载、联网、主板硬件探测等可能阻塞较久的任务时，可把 timeout_seconds 提高到 1800 秒。")
+            .AppendLine("- 只要是在当前会话窗口执行命令都有run_shell_command工具。当前窗口可能是串口终端或者ssh终端")
+            .AppendLine("- ssh_execute_command、ssh_list_directory、ssh_read_file、ssh_write_file四个工具主要针对辅助服务器或者用户提供的服务器。不针对当前会话窗口。")            
+            .AppendLine("- fetch_web_page、search_web工具主要针对用户提供的需求比较复杂需要去网上查找相关资料时候使用。")                 
             .AppendLine("- thinking 通过流式 reasoning 输出，content 通过流式正文输出。不要把 thinking 写进 content JSON。")
             .AppendLine("- 不要在正文里输出 thinking、content、tool_calls 这三个字面标签；thinking 走 reasoning 通道，content 只输出 JSON，tool_calls 只走工具调用字段。")
             .AppendLine("- content 必须始终是 JSON，并且只能包含这些字段: {\"complete\":bool,\"analysis\":string,\"final_message\":string}。")
@@ -342,7 +383,6 @@ public sealed class TerminalAgentService
             .AppendLine("- 不要把解释性文本放在 JSON 外面。")
             .AppendLine("- 禁止使用交互式的指令，比如 vim、nano、less、more 等。dnf install 必须加上 -y 参数。docker指令使用docker exec my_container sh -c '指令' 而不是 docker exec -it进入容器内。并且输出不能分页。")
             .AppendLine("- 输出尽量使用grep、awk、sed等工具过滤和处理，避免输出过多无关信息。")
-            .AppendLine("- 如果资料库启用且可用，先调用 list_knowledge_documents 列出资料，再挑选最相关的文件调用 read_knowledge_document 读取。")
             .AppendLine("- 已读取的资料内容会在当前会话的后续轮次继续发送给模型，因此不要重复读取相同资料，除非确有必要。")
             .AppendLine("- 如果当前信息不足且无法继续，请返回 complete=false，并在 final_message 中明确说明需要用户补充什么。")
             .AppendLine("输出协议固定为 three-part: thinking, content, tool_calls。其中 thinking 可为空，content 必须是上述 JSON，tool_calls 只在未完成时返回。")
@@ -358,7 +398,8 @@ public sealed class TerminalAgentService
 
         if (config.KnowledgeBase.Enabled)
         {
-            builder.AppendLine("资料库:")
+            builder.AppendLine("生成执行指令前，你要调用资料库工具搜索和读取资料，先使用 list_knowledge_documents 列出相关资料，通过资料文档名称判断资料是否和需求强相关。如果有就使用 read_knowledge_document 读取内容。")
+                .AppendLine("资料库:")
                 .AppendLine($"- 远端主机: {config.KnowledgeBase.Host}:{config.KnowledgeBase.Port}")
                 .AppendLine($"- 远端根目录: {config.KnowledgeBase.RootDir}")
                 .AppendLine($"- 本地缓存目录: {ConfigService.ExpandPath(config.KnowledgeBase.LocalCacheDir)}")
@@ -368,6 +409,9 @@ public sealed class TerminalAgentService
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Builds the per-turn user prompt from the session metadata, objective, and latest terminal transcript.
+    /// </summary>
     private static string BuildUserPrompt(TerminalSessionInfo session, string objective, string transcript)
     {
         var builder = new StringBuilder();
@@ -386,6 +430,9 @@ public sealed class TerminalAgentService
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Filters the full tool catalog down to the subset the terminal agent is allowed to call.
+    /// </summary>
     private static IReadOnlyList<Dictionary<string, object?>> BuildTerminalDefinitions(IReadOnlyList<Dictionary<string, object?>> definitions)
     {
         var filtered = definitions
@@ -420,6 +467,9 @@ public sealed class TerminalAgentService
         return filtered;
     }
 
+    /// <summary>
+    /// Converts the assistant response into a persisted tool-call message for the next LLM turn.
+    /// </summary>
     private static PersistedChatMessage BuildAssistantToolCallMessage(LlmResponse response)
     {
         return new PersistedChatMessage
@@ -439,6 +489,9 @@ public sealed class TerminalAgentService
         };
     }
 
+    /// <summary>
+    /// Parses the assistant JSON payload into a structured terminal agent plan.
+    /// </summary>
     private static TerminalAgentPlan ParsePlan(string raw, bool allowEmptyContent = false)
     {
         try
@@ -483,6 +536,9 @@ public sealed class TerminalAgentService
         }
     }
 
+    /// <summary>
+    /// Extracts the JSON body from a raw model response that may be wrapped in a fenced code block.
+    /// </summary>
     private static string ExtractJson(string raw)
     {
         var trimmed = raw.Trim();
@@ -499,12 +555,18 @@ public sealed class TerminalAgentService
         return trimmed;
     }
 
+    /// <summary>
+    /// Formats a terminal command execution result for timeline and diagnostic output.
+    /// </summary>
     private static string BuildExecutionNote(TerminalCommandResult result)
     {
         var output = string.IsNullOrWhiteSpace(result.Output) ? "<empty>" : result.Output;
         return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
     }
 
+    /// <summary>
+    /// Executes a terminal command tool call against the currently selected session instead of the local workspace shell.
+    /// </summary>
     private async Task<ToolExecutionResult> ExecuteTerminalCommandToolAsync(string sessionId, IReadOnlyDictionary<string, object?> arguments, AppConfig config, CancellationToken cancellationToken)
     {
         var command = GetRequiredString(arguments, "command");
@@ -527,6 +589,9 @@ public sealed class TerminalAgentService
         }));
     }
 
+    /// <summary>
+    /// Reads a required string argument from a tool-call payload.
+    /// </summary>
     private static string GetRequiredString(IReadOnlyDictionary<string, object?> arguments, string key)
     {
         if (!arguments.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value?.ToString()))
@@ -537,6 +602,9 @@ public sealed class TerminalAgentService
         return value!.ToString()!;
     }
 
+    /// <summary>
+    /// Reads an integer argument from a tool-call payload, accepting boxed numbers and JSON numeric elements.
+    /// </summary>
     private static int GetInt(IReadOnlyDictionary<string, object?> arguments, string key, int defaultValue)
     {
         if (!arguments.TryGetValue(key, out var value) || value is null)
@@ -554,6 +622,9 @@ public sealed class TerminalAgentService
         };
     }
 
+    /// <summary>
+    /// Deep-clones a tool definition so per-agent adjustments do not mutate the shared catalog.
+    /// </summary>
     private static Dictionary<string, object?> CloneDefinition(Dictionary<string, object?> definition)
     {
         var clone = new Dictionary<string, object?>(definition.Count, StringComparer.Ordinal);

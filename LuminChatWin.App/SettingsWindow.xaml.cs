@@ -80,8 +80,8 @@ public partial class SettingsWindow : Window
         AddTextBox(CommandExecutionPanel, "command_login_password", "默认登录密码（可留空）", _draft.Terminal.CommandExecution.LoginPassword);
         AddTextBox(CommandExecutionPanel, "command_login_attempts", "最大登录尝试次数", _draft.Terminal.CommandExecution.MaxLoginAttempts.ToString());
         AddTextBox(CommandExecutionPanel, "command_probe_timeout", "单次探测等待秒数", _draft.Terminal.CommandExecution.ProbeTimeoutSeconds.ToString("0.##"));
-        AddTextBox(CommandExecutionPanel, "command_prompt_pattern", "命令行提示符正则", _draft.Terminal.CommandExecution.PromptPattern);
-        AddInfoText(CommandExecutionPanel, "每次执行任务前都会先发一个 Enter 探测当前状态。如果最后一行是 login: 或 Password:，会按这里的账号密码最多尝试三次登录；登录成功后，再发一个 Enter 保存当前 shell prompt，执行命令后再追加一个 Enter，用它的响应来判断命令是否真正结束。", new Thickness(0, 6, 0, 0));
+        AddMultiLineTextBox(CommandExecutionPanel, "command_prompt_patterns", "命令行提示符正则列表", string.Join(Environment.NewLine, GetPromptPatterns()));
+        AddInfoText(CommandExecutionPanel, "每行填写一个正则。探测时只要命中任意一条，就会被视为命令提示符。执行前会先发 Enter 探测当前状态；若遇到 login:/password: 会按这里的账号密码最多尝试三次登录，必要时还会发送 Ctrl+C 清理阻塞命令。", new Thickness(0, 6, 0, 0));
     }
 
     private void BuildSecondary()
@@ -166,7 +166,7 @@ public partial class SettingsWindow : Window
         _draft.Terminal.CommandExecution.LoginPassword = ReadText("command_login_password", _draft.Terminal.CommandExecution.LoginPassword);
         _draft.Terminal.CommandExecution.MaxLoginAttempts = ReadInt("command_login_attempts", _draft.Terminal.CommandExecution.MaxLoginAttempts);
         _draft.Terminal.CommandExecution.ProbeTimeoutSeconds = ReadDouble("command_probe_timeout", _draft.Terminal.CommandExecution.ProbeTimeoutSeconds);
-        _draft.Terminal.CommandExecution.PromptPattern = ReadText("command_prompt_pattern", _draft.Terminal.CommandExecution.PromptPattern);
+        _draft.Terminal.CommandExecution.PromptPatterns = ReadLines("command_prompt_patterns");
 
         _draft.SecondaryServer.Enabled = ReadCheckBox("secondary_enabled", _draft.SecondaryServer.Enabled);
         _draft.SecondaryServer.Host = ReadText("secondary_host", _draft.SecondaryServer.Host);
@@ -311,6 +311,14 @@ public partial class SettingsWindow : Window
             .Select(static line => line.Trim())
             .Where(static line => !string.IsNullOrWhiteSpace(line))
             .ToList();
+    }
+
+    private List<string> GetPromptPatterns()
+    {
+        var patterns = _draft.Terminal.CommandExecution.PromptPatterns
+            .Where(static pattern => !string.IsNullOrWhiteSpace(pattern))
+            .ToList();
+        return patterns.Count > 0 ? patterns : [@".+[#$>%]\s*$"];
     }
 
     private sealed record ComboItem(string Value, string Display);

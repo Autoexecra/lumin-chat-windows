@@ -11,9 +11,9 @@
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="NavigationTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
-            <Setter Property="Width" Value="52"/>
-            <Setter Property="Height" Value="108"/>
-            <Setter Property="Padding" Value="10,12"/>
+            <Setter Property="Width" Value="44"/>
+            <Setter Property="Height" Value="104"/>
+            <Setter Property="Padding" Value="6,12"/>
             <Setter Property="HeaderTemplate">
                 <Setter.Value>
                     <DataTemplate>

@@ -7,6 +7,10 @@ using LuminChatWin.Core.Models;
 
 namespace LuminChatWin.Core.Services;
 
+/// <summary>
+/// Executes the app's local, SSH, web, git, and repository-document tools while enforcing workspace,
+/// approval, and command-policy constraints.
+/// </summary>
 public sealed class ToolExecutor
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -19,6 +23,9 @@ public sealed class ToolExecutor
     private readonly Dictionary<string, string> _knowledgeDocumentCache = new(StringComparer.OrdinalIgnoreCase);
     private bool _knowledgeIndexLoaded;
 
+    /// <summary>
+    /// Creates a tool executor rooted at the provided working directory and approval policy.
+    /// </summary>
     public ToolExecutor(AppConfig config, string cwd, string approvalPolicy = "auto", Func<string, string, bool>? confirmCallback = null)
     {
         _config = config;
@@ -28,10 +35,19 @@ public sealed class ToolExecutor
         Directory.CreateDirectory(Cwd);
     }
 
+    /// <summary>
+    /// Gets the executor's current working directory.
+    /// </summary>
     public string Cwd { get; private set; }
 
+    /// <summary>
+    /// Gets the current approval policy used for mutating commands.
+    /// </summary>
     public string ApprovalPolicy { get; private set; }
 
+    /// <summary>
+    /// Returns the full tool catalog exposed to the LLM runtime.
+    /// </summary>
     public IReadOnlyList<Dictionary<string, object?>> Definitions()
     {
         return
@@ -223,16 +239,25 @@ public sealed class ToolExecutor
         ];
     }
 
+    /// <summary>
+    /// Updates the approval policy without recreating the executor.
+    /// </summary>
     public void SetApprovalPolicy(string approvalPolicy)
     {
         ApprovalPolicy = approvalPolicy;
     }
 
+    /// <summary>
+    /// Updates the command policy mode on the shared config object.
+    /// </summary>
     public void SetCommandPolicyMode(string mode)
     {
         _config.CommandPolicy.Mode = mode;
     }
 
+    /// <summary>
+    /// Executes a single tool call and converts exceptions into structured tool failures.
+    /// </summary>
     public async Task<ToolExecutionResult> ExecuteAsync(ToolCall toolCall, CancellationToken cancellationToken = default)
     {
         try
@@ -275,11 +300,17 @@ public sealed class ToolExecutor
         }
     }
 
+    /// <summary>
+    /// Builds a textual snapshot of the current workspace for prompts and diagnostics.
+    /// </summary>
     public string BuildWorkspaceContext(int maxDepth = 2, int maxEntries = 40)
     {
         return GetWorkspaceOverview(null, maxDepth, maxEntries).Output;
     }
 
+    /// <summary>
+    /// Changes the executor's working directory if the target exists.
+    /// </summary>
     public ToolExecutionResult ChangeDirectory(string path)
     {
         var resolved = ResolvePath(path);
@@ -295,6 +326,9 @@ public sealed class ToolExecutor
         }));
     }
 
+    /// <summary>
+    /// Lists files and directories relative to the requested root.
+    /// </summary>
     public ToolExecutionResult ListDirectory(string? path = null, bool recursive = false, int maxEntries = 200)
     {
         var root = ResolvePath(path);
@@ -316,6 +350,9 @@ public sealed class ToolExecutor
         return new ToolExecutionResult("list_directory", true, Json(entries));
     }
 
+    /// <summary>
+    /// Performs a simple substring search across matching files.
+    /// </summary>
     public ToolExecutionResult SearchText(string pattern, string? path = null, string glob = "**/*", bool caseSensitive = false, int maxMatches = 50)
     {
         var root = ResolveExistingBase(path);
@@ -350,6 +387,9 @@ public sealed class ToolExecutor
         return new ToolExecutionResult("search_text", true, Json(matches));
     }
 
+    /// <summary>
+    /// Finds files matching the provided glob pattern.
+    /// </summary>
     public ToolExecutionResult FindFiles(string pattern = "**/*", string? path = null, int maxResults = 200, bool includeHidden = false)
     {
         var root = ResolveExistingBase(path);
@@ -364,6 +404,9 @@ public sealed class ToolExecutor
         return new ToolExecutionResult("find_files", true, Json(files));
     }
 
+    /// <summary>
+    /// Reads a text file and returns numbered lines.
+    /// </summary>
     public ToolExecutionResult ReadFile(string path, int startLine = 1, int endLine = 200)
     {
         var resolved = ResolvePath(path);
@@ -379,6 +422,9 @@ public sealed class ToolExecutor
         return new ToolExecutionResult("read_file", true, string.Join(Environment.NewLine, lines));
     }
 
+    /// <summary>
+    /// Writes a text file, optionally appending to existing content.
+    /// </summary>
     public ToolExecutionResult WriteFile(string path, string content, bool append = false)
     {
         var resolved = ResolvePath(path);
@@ -400,6 +446,9 @@ public sealed class ToolExecutor
         }));
     }
 
+    /// <summary>
+    /// Replaces exact text in a file, optionally across every occurrence.
+    /// </summary>
     public ToolExecutionResult ReplaceInFile(string path, string searchText, string replaceText, bool replaceAll = false)
     {
         var resolved = ResolvePath(path);
@@ -426,6 +475,9 @@ public sealed class ToolExecutor
         }));
     }
 
+    /// <summary>
+    /// Inserts text at the requested one-based line number.
+    /// </summary>
     public ToolExecutionResult InsertInFile(string path, string content, int lineNumber = 1)
     {
         var resolved = ResolvePath(path);
@@ -441,6 +493,9 @@ public sealed class ToolExecutor
         }));
     }
 
+    /// <summary>
+    /// Returns basic environment metadata for the current process and workspace.
+    /// </summary>
     public ToolExecutionResult GetEnvironment()
     {
         var payload = new Dictionary<string, object?>
@@ -455,6 +510,9 @@ public sealed class ToolExecutor
         return new ToolExecutionResult("get_environment", true, Json(payload));
     }
 
+    /// <summary>
+    /// Returns a workspace tree summary plus lightweight git status information.
+    /// </summary>
     public ToolExecutionResult GetWorkspaceOverview(string? path = null, int maxDepth = 2, int maxEntries = 80)
     {
         var root = ResolveExistingBase(path);
@@ -482,6 +540,9 @@ public sealed class ToolExecutor
         return new ToolExecutionResult("get_workspace_overview", true, builder.ToString().Trim());
     }
 
+    /// <summary>
+    /// Reads git status for the selected repository path.
+    /// </summary>
     public async Task<ToolExecutionResult> GitStatusAsync(string? repoPath = null, bool includeUntracked = true, CancellationToken cancellationToken = default)
     {
         var root = ResolveExistingBase(repoPath);
@@ -489,6 +550,9 @@ public sealed class ToolExecutor
         return await RunGitAsync(args, root, "git_status", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Reads git diff output for the selected repository path.
+    /// </summary>
     public async Task<ToolExecutionResult> GitDiffAsync(string? repoPath = null, string? pathspec = null, bool cached = false, int maxChars = 12000, CancellationToken cancellationToken = default)
     {
         var root = ResolveExistingBase(repoPath);
@@ -512,6 +576,9 @@ public sealed class ToolExecutor
         return result;
     }
 
+    /// <summary>
+    /// Runs a PowerShell command inside the current workspace after policy and approval checks.
+    /// </summary>
     public async Task<ToolExecutionResult> RunShellCommandAsync(string command, int timeoutSeconds = 120, string? cwd = null, CancellationToken cancellationToken = default)
     {
         var allowed = CheckCommandPolicy(command);

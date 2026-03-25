@@ -66,8 +66,8 @@ internal sealed class PowerShellTerminalBackend : ITerminalBackend
         }
 
         _readerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _stdoutTask = Task.Run(() => ReadLinesAsync(_process.StandardOutput, OutputReceived, _readerCts.Token), _readerCts.Token);
-        _stderrTask = Task.Run(() => ReadLinesAsync(_process.StandardError, ErrorReceived, _readerCts.Token), _readerCts.Token);
+        _stdoutTask = Task.Run(() => ReadStreamAsync(_process.StandardOutput, OutputReceived, _readerCts.Token), _readerCts.Token);
+        _stderrTask = Task.Run(() => ReadStreamAsync(_process.StandardError, ErrorReceived, _readerCts.Token), _readerCts.Token);
         StatusReceived?.Invoke(this, $"Connected to PowerShell in {_workingDirectory}");
         return Task.CompletedTask;
     }
@@ -147,17 +147,18 @@ internal sealed class PowerShellTerminalBackend : ITerminalBackend
         };
     }
 
-    private static async Task ReadLinesAsync(StreamReader reader, EventHandler<string>? handler, CancellationToken cancellationToken)
+    private static async Task ReadStreamAsync(StreamReader reader, EventHandler<string>? handler, CancellationToken cancellationToken)
     {
+        var buffer = new char[256];
         while (!cancellationToken.IsCancellationRequested)
         {
-            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line is null)
+            var charsRead = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (charsRead <= 0)
             {
                 break;
             }
 
-            handler?.Invoke(null!, line + Environment.NewLine);
+            handler?.Invoke(null!, new string(buffer, 0, charsRead));
         }
     }
 

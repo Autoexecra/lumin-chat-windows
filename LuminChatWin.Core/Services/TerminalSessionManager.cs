@@ -176,21 +176,6 @@ public sealed class TerminalSessionManager : IAsyncDisposable
                 };
             }
 
-            var promptProbe = await ProbePromptAsync(session, cancellationToken).ConfigureAwait(false);
-            if (!promptProbe.Success)
-            {
-                return new TerminalCommandResult
-                {
-                    Success = false,
-                    TimedOut = false,
-                    Command = command,
-                    Output = promptProbe.Output.TrimEnd(),
-                    StartedAt = startedAt.ToString("O"),
-                    CompletedAt = DateTime.UtcNow.ToString("O"),
-                    Error = promptProbe.Error,
-                };
-            }
-
             AppendHistory(session, TerminalHistoryEntryKind.Command, command);
             BeginCommandCapture(session, command, startedAt);
 
@@ -198,30 +183,41 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             await session.Backend.SendAsync(command + TerminalEnter, cancellationToken).ConfigureAwait(false);
             await session.Backend.SendAsync(TerminalEnter, cancellationToken).ConfigureAwait(false);
 
-            var timedOut = await WaitForCommandCompletionAsync(session, promptProbe.PromptMarker, timeout, cancellationToken).ConfigureAwait(false);
+            var promptMarker = readiness.PromptMarker;
+            var timedOut = await WaitForCommandCompletionAsync(session, promptMarker, timeout, cancellationToken).ConfigureAwait(false);
+            var error = string.Empty;
 
             if (timedOut)
             {
-                await session.Backend.SendInterruptAsync(cancellationToken).ConfigureAwait(false);
-                AppendHistory(session, TerminalHistoryEntryKind.System, $"Command timed out after {timeout.TotalSeconds:F1}s; sent Ctrl+C.");
-
-                // After Ctrl+C, send one more Enter so the shell has a chance to re-emit the saved prompt.
-                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
-                await session.Backend.SendAsync(TerminalEnter, cancellationToken).ConfigureAwait(false);
-                await WaitForPromptProbeAsync(session, promptProbe.PromptMarker, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                var probeBudget = ResolveProbeBudget(timeout, Config.CommandExecution);
+                var postTimeoutPromptDetected = await SendPromptProbeDuringCaptureAsync(session, promptMarker, probeBudget, cancellationToken).ConfigureAwait(false);
+                if (postTimeoutPromptDetected)
+                {
+                    timedOut = false;
+                }
+                else
+                {
+                    await session.Backend.SendInterruptAsync(cancellationToken).ConfigureAwait(false);
+                    AppendHistory(session, TerminalHistoryEntryKind.System, $"Command timed out after {timeout.TotalSeconds:F1}s; sent Ctrl+C.");
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                    var recoveredAfterInterrupt = await SendPromptProbeDuringCaptureAsync(session, promptMarker, probeBudget, cancellationToken).ConfigureAwait(false);
+                    error = recoveredAfterInterrupt
+                        ? "命令超时，已发送 Ctrl+C 中断阻塞任务。"
+                        : "命令超时，且发送 Ctrl+C 后仍未恢复命令提示符。";
+                }
             }
 
             var output = EndCommandCapture(session);
 
             return new TerminalCommandResult
             {
-                Success = !timedOut,
+                Success = !timedOut && string.IsNullOrWhiteSpace(error),
                 TimedOut = timedOut,
                 Command = command,
                 Output = output.TrimEnd(),
                 StartedAt = startedAt.ToString("O"),
                 CompletedAt = DateTime.UtcNow.ToString("O"),
-                Error = timedOut ? "Command timed out." : string.Empty,
+                Error = error,
             };
         }
         finally
@@ -545,10 +541,10 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
     internal static string? TryExtractShellPromptMarker(string text)
     {
-        return TryExtractShellPromptMarker(text, @".+[#$>%]\s*$");
+        return TryExtractShellPromptMarker(text, [@".+[#$>%]\s*$"]);
     }
 
-    internal static string? TryExtractShellPromptMarker(string text, string promptPattern)
+    internal static string? TryExtractShellPromptMarker(string text, IEnumerable<string>? promptPatterns)
     {
         var lastLine = GetLastMeaningfulLine(text);
         if (string.IsNullOrWhiteSpace(lastLine) || IsLoginPrompt(lastLine) || IsPasswordPrompt(lastLine))
@@ -562,17 +558,15 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return null;
         }
 
-        Regex promptRegex;
-        try
+        foreach (var promptRegex in BuildPromptRegexes(promptPatterns))
         {
-            promptRegex = new Regex(promptPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        }
-        catch (ArgumentException)
-        {
-            promptRegex = new Regex(@".+[#$>%]\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (promptRegex.IsMatch(trimmed))
+            {
+                return trimmed;
+            }
         }
 
-        return promptRegex.IsMatch(trimmed) ? trimmed : null;
+        return null;
     }
 
     private static void ApplyTerminalChunk(SessionState session, string text)
@@ -669,7 +663,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             var probe = await SendAndCaptureAsync(session, TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
             combinedOutput.Append(probe);
 
-            var promptMarker = TryExtractShellPromptMarker(probe, executionConfig.PromptPattern);
+            var promptMarker = TryExtractShellPromptMarker(probe, executionConfig.PromptPatterns);
             if (!string.IsNullOrWhiteSpace(promptMarker))
             {
                 return new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput.ToString());
@@ -700,6 +694,25 @@ public sealed class TerminalSessionManager : IAsyncDisposable
                 {
                     return new CommandReadinessResult(true, passwordResult.PromptMarker, string.Empty, combinedOutput.ToString());
                 }
+
+                if (attempt == maxAttempts - 1)
+                {
+                    return new CommandReadinessResult(false, string.Empty, passwordResult.Error, combinedOutput.ToString());
+                }
+
+                continue;
+            }
+
+            var recoveryResult = await TryRecoverBlockedSessionAsync(session, executionConfig, probeBudget, cancellationToken).ConfigureAwait(false);
+            combinedOutput.Append(recoveryResult.Output);
+            if (recoveryResult.Success)
+            {
+                return new CommandReadinessResult(true, recoveryResult.PromptMarker, string.Empty, combinedOutput.ToString());
+            }
+
+            if (attempt == maxAttempts - 1)
+            {
+                return new CommandReadinessResult(false, string.Empty, recoveryResult.Error, combinedOutput.ToString());
             }
         }
 
@@ -716,7 +729,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         var loginOutput = await SendAndCaptureAsync(session, executionConfig.LoginUsername + TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
         var combinedOutput = loginOutput;
 
-        if (TryExtractShellPromptMarker(loginOutput, executionConfig.PromptPattern) is string promptMarker)
+        if (TryExtractShellPromptMarker(loginOutput, executionConfig.PromptPatterns) is string promptMarker)
         {
             return new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput);
         }
@@ -729,8 +742,8 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
         var verificationOutput = await SendAndCaptureAsync(session, TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
         combinedOutput += verificationOutput;
-        string? verifiedPromptMarker = TryExtractShellPromptMarker(verificationOutput, executionConfig.PromptPattern)
-            ?? TryExtractShellPromptMarker(combinedOutput, executionConfig.PromptPattern);
+        string? verifiedPromptMarker = TryExtractShellPromptMarker(verificationOutput, executionConfig.PromptPatterns)
+            ?? TryExtractShellPromptMarker(combinedOutput, executionConfig.PromptPatterns);
         return !string.IsNullOrWhiteSpace(verifiedPromptMarker)
             ? new CommandReadinessResult(true, verifiedPromptMarker, string.Empty, combinedOutput)
             : new CommandReadinessResult(false, string.Empty, "输入登录账号后仍未进入命令行。", combinedOutput);
@@ -740,7 +753,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     {
         var passwordOutput = await SendAndCaptureAsync(session, (executionConfig.LoginPassword ?? string.Empty) + TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
         var combinedOutput = passwordOutput;
-        if (TryExtractShellPromptMarker(passwordOutput, executionConfig.PromptPattern) is string promptMarker)
+        if (TryExtractShellPromptMarker(passwordOutput, executionConfig.PromptPatterns) is string promptMarker)
         {
             return new CommandReadinessResult(true, promptMarker, string.Empty, combinedOutput);
         }
@@ -753,20 +766,38 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return new CommandReadinessResult(false, string.Empty, "当前设置无法正常登录。", combinedOutput);
         }
 
-        string? verifiedPromptMarker = TryExtractShellPromptMarker(verificationOutput, executionConfig.PromptPattern)
-            ?? TryExtractShellPromptMarker(combinedOutput, executionConfig.PromptPattern);
+        string? verifiedPromptMarker = TryExtractShellPromptMarker(verificationOutput, executionConfig.PromptPatterns)
+            ?? TryExtractShellPromptMarker(combinedOutput, executionConfig.PromptPatterns);
         return !string.IsNullOrWhiteSpace(verifiedPromptMarker)
             ? new CommandReadinessResult(true, verifiedPromptMarker, string.Empty, combinedOutput)
             : new CommandReadinessResult(false, string.Empty, "登录后仍无法识别命令行提示符。", combinedOutput);
     }
 
-    private async Task<CommandReadinessResult> ProbePromptAsync(SessionState session, CancellationToken cancellationToken)
+    private async Task<CommandReadinessResult> TryRecoverBlockedSessionAsync(SessionState session, TerminalCommandExecutionConfig executionConfig, TimeSpan probeBudget, CancellationToken cancellationToken)
     {
-        var probeOutput = await SendAndCaptureAsync(session, TerminalEnter, ResolveProbeBudget(TimeSpan.FromSeconds(Config.CommandExecution.ProbeTimeoutSeconds), Config.CommandExecution), cancellationToken).ConfigureAwait(false);
-        var promptMarker = TryExtractShellPromptMarker(probeOutput, Config.CommandExecution.PromptPattern);
-        return !string.IsNullOrWhiteSpace(promptMarker)
-            ? new CommandReadinessResult(true, promptMarker, string.Empty, probeOutput)
-            : new CommandReadinessResult(false, string.Empty, "执行命令前未能识别当前命令行提示符。", probeOutput);
+        await session.Backend.SendInterruptAsync(cancellationToken).ConfigureAwait(false);
+        AppendHistory(session, TerminalHistoryEntryKind.System, "探测到终端可能被阻塞，已发送 Ctrl+C。\n");
+        await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+
+        var recoveryOutput = await SendAndCaptureAsync(session, TerminalEnter, probeBudget, cancellationToken).ConfigureAwait(false);
+        if (TryExtractShellPromptMarker(recoveryOutput, executionConfig.PromptPatterns) is string promptMarker)
+        {
+            return new CommandReadinessResult(true, promptMarker, string.Empty, recoveryOutput);
+        }
+
+        if (IsLoginPrompt(recoveryOutput))
+        {
+            var loginResult = await TryLoginAsync(session, executionConfig, probeBudget, cancellationToken).ConfigureAwait(false);
+            return loginResult with { Output = recoveryOutput + loginResult.Output };
+        }
+
+        if (IsPasswordPrompt(recoveryOutput))
+        {
+            var passwordResult = await CompletePasswordLoginAsync(session, executionConfig, probeBudget, cancellationToken).ConfigureAwait(false);
+            return passwordResult with { Output = recoveryOutput + passwordResult.Output };
+        }
+
+        return new CommandReadinessResult(false, string.Empty, "发送 Ctrl+C 后仍未恢复命令提示符。", recoveryOutput);
     }
 
     private static void BeginCommandCapture(SessionState session, string command, DateTime startedAt)
@@ -845,6 +876,13 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         return CountPromptOccurrences(GetActiveCommandSnapshot(session, out _), promptMarker) < 2;
     }
 
+    private async Task<bool> SendPromptProbeDuringCaptureAsync(SessionState session, string promptMarker, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        await session.Backend.SendAsync(TerminalEnter, cancellationToken).ConfigureAwait(false);
+        await WaitForPromptProbeAsync(session, promptMarker, timeout, cancellationToken).ConfigureAwait(false);
+        return CountPromptOccurrences(GetActiveCommandSnapshot(session, out _), promptMarker) >= 1;
+    }
+
     private async Task WaitForPromptProbeAsync(SessionState session, string? promptMarker, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var startedAt = DateTime.UtcNow;
@@ -905,6 +943,37 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     {
         var configuredSeconds = executionConfig.ProbeTimeoutSeconds > 0 ? executionConfig.ProbeTimeoutSeconds : 3;
         return TimeSpan.FromSeconds(Math.Min(Math.Max(1, configuredSeconds), Math.Max(1, timeout.TotalSeconds)));
+    }
+
+    private static IReadOnlyList<Regex> BuildPromptRegexes(IEnumerable<string>? promptPatterns)
+    {
+        var patterns = promptPatterns?
+            .Where(static pattern => !string.IsNullOrWhiteSpace(pattern))
+            .ToList() ?? [];
+
+        if (patterns.Count == 0)
+        {
+            patterns.Add(@".+[#$>%]\s*$");
+        }
+
+        var regexes = new List<Regex>(patterns.Count);
+        foreach (var pattern in patterns)
+        {
+            try
+            {
+                regexes.Add(new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+
+        if (regexes.Count == 0)
+        {
+            regexes.Add(new Regex(@".+[#$>%]\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+        }
+
+        return regexes;
     }
 
     private static string GetLastMeaningfulLine(string text)

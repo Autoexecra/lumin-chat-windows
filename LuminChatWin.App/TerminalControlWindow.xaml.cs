@@ -59,9 +59,9 @@ public partial class TerminalControlWindow : Window
         RefreshApiSummary();
         RefreshBridgeTargets();
         ProfileHintTextBlock.Text = "串口会话开启 SSH 共享后会在打开时自动启动桥接，API 共享则决定是否暴露到本地 HTTP API。";
-        AgentStatusTextBlock.Text = "Ready";
+        ResetRequestStatus(AgentStatusTextBlock);
         AgentSummaryTextBlock.Text = "未开始执行。选择目标会话、模型和需求后发送给 Agent。";
-        PromptStatusTextBlock.Text = "Ready";
+        ResetRequestStatus(PromptStatusTextBlock);
         PromptSummaryTextBlock.Text = "未开始执行。生成建议命令后手动执行。";
         NavigationPaneColumn.Width = new GridLength(ExpandedNavigationPaneWidth);
         SetWindowStatus("终端工作台已就绪。焦点进入终端正文后可直接输入。", isMuted: true);
@@ -375,7 +375,7 @@ public partial class TerminalControlWindow : Window
             AddAgentTimeline("user", request);
             _agentDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
             AgentRequestTextBox.Clear();
-            AgentStatusTextBlock.Text = "Agent 正在自动执行...";
+            SetRequestStatus(AgentStatusTextBlock, request);
             AgentSummaryTextBlock.Text = $"目标会话：{targetSessionId} | 模型：{GetSelectedModelKey()}";
             SetWindowStatus("Agent 正在自动规划并执行。", isMuted: false);
 
@@ -390,7 +390,7 @@ public partial class TerminalControlWindow : Window
             if (!plan.Success)
             {
                 AddAgentTimeline("agent", $"规划失败: {plan.Error}");
-                AgentStatusTextBlock.Text = "规划失败";
+                ResetRequestStatus(AgentStatusTextBlock);
                 AgentSummaryTextBlock.Text = plan.Error;
                 SetWindowStatus("Agent 规划失败。", isMuted: false);
                 return;
@@ -409,27 +409,27 @@ public partial class TerminalControlWindow : Window
 
             if (plan.Completed)
             {
-                AgentStatusTextBlock.Text = "任务完成";
+                ResetRequestStatus(AgentStatusTextBlock);
                 AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "Agent 判断任务已完成。" : plan.FinalMessage;
                 SetWindowStatus("Agent 已完成当前任务。", isMuted: false);
                 RefreshOpenSessions(targetSessionId);
             }
             else if (plan.NeedInput)
             {
-                AgentStatusTextBlock.Text = "等待补充信息";
+                ResetRequestStatus(AgentStatusTextBlock);
                 AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "Agent 需要更多上下文。" : plan.FinalMessage;
                 SetWindowStatus("Agent 需要人工补充信息。", isMuted: false);
             }
             else
             {
-                AgentStatusTextBlock.Text = "已停止";
+                ResetRequestStatus(AgentStatusTextBlock);
                 AgentSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand) ? "本轮未生成可执行命令。" : $"最后建议命令：{plan.SuggestedCommand}";
                 SetWindowStatus("Agent 已停止自动流程。", isMuted: true);
             }
         }
         catch (Exception ex)
         {
-            AgentStatusTextBlock.Text = "Agent 执行失败";
+            ResetRequestStatus(AgentStatusTextBlock);
             AgentSummaryTextBlock.Text = ex.Message;
             ShowError(ex);
         }
@@ -467,7 +467,7 @@ public partial class TerminalControlWindow : Window
             _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "user", Content = request });
             AddAgentTimeline("user", $"[提示模式] {request}");
             PromptRequestTextBox.Clear();
-            PromptStatusTextBlock.Text = "正在生成建议命令...";
+            SetRequestStatus(PromptStatusTextBlock, request);
             PromptSummaryTextBlock.Text = $"目标会话：{targetSessionId} | 模型：{GetPromptSelectedModelKey()}";
 
             var plan = await _runtime.TerminalAgent.RunLoopAsync(
@@ -482,6 +482,7 @@ public partial class TerminalControlWindow : Window
         }
         catch (Exception ex)
         {
+            ResetRequestStatus(PromptStatusTextBlock);
             ShowError(ex);
         }
         finally
@@ -507,7 +508,7 @@ public partial class TerminalControlWindow : Window
         try
         {
             _agentBusy = true;
-            PromptStatusTextBlock.Text = "正在执行建议命令...";
+            SetRequestStatus(PromptStatusTextBlock, _promptObjective);
             var result = await _runtime.TerminalSessions.ExecuteCommandAsync(
                 targetSessionId,
                 command,
@@ -530,6 +531,7 @@ public partial class TerminalControlWindow : Window
         }
         catch (Exception ex)
         {
+            ResetRequestStatus(PromptStatusTextBlock);
             ShowError(ex);
         }
         finally
@@ -1142,7 +1144,7 @@ public partial class TerminalControlWindow : Window
     {
         if (!plan.Success)
         {
-            PromptStatusTextBlock.Text = "规划失败";
+            ResetRequestStatus(PromptStatusTextBlock);
             PromptSummaryTextBlock.Text = plan.Error;
             AddAgentTimeline("agent", $"[提示模式] 规划失败: {plan.Error}");
             return;
@@ -1162,7 +1164,7 @@ public partial class TerminalControlWindow : Window
         if (plan.Completed)
         {
             PromptSuggestedCommandTextBox.Clear();
-            PromptStatusTextBlock.Text = "任务完成";
+            ResetRequestStatus(PromptStatusTextBlock);
             PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "Agent 判断任务已完成。" : plan.FinalMessage;
             return;
         }
@@ -1170,14 +1172,24 @@ public partial class TerminalControlWindow : Window
         if (plan.NeedInput)
         {
             PromptSuggestedCommandTextBox.Clear();
-            PromptStatusTextBlock.Text = "等待补充信息";
+            ResetRequestStatus(PromptStatusTextBlock);
             PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.FinalMessage) ? "Agent 需要更多上下文。" : plan.FinalMessage;
             return;
         }
 
         PromptSuggestedCommandTextBox.Text = plan.SuggestedCommand;
-        PromptStatusTextBlock.Text = "已生成建议命令";
+        ResetRequestStatus(PromptStatusTextBlock);
         PromptSummaryTextBlock.Text = string.IsNullOrWhiteSpace(plan.SuggestedCommand) ? "本轮未生成命令。" : $"待手动执行：{plan.SuggestedCommand}";
+    }
+
+    private static void SetRequestStatus(TextBlock target, string request)
+    {
+        target.Text = string.IsNullOrWhiteSpace(request) ? "Ready" : request.Trim();
+    }
+
+    private static void ResetRequestStatus(TextBlock target)
+    {
+        target.Text = "Ready";
     }
 
     private static string BuildExecutionNote(TerminalCommandResult result)
