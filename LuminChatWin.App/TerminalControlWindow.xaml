@@ -11,9 +11,11 @@
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="NavigationTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
-            <Setter Property="Width" Value="44"/>
-            <Setter Property="Height" Value="104"/>
-            <Setter Property="Padding" Value="6,12"/>
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="102"/>
+            <Setter Property="Padding" Value="0,12"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="HeaderTemplate">
                 <Setter.Value>
                     <DataTemplate>
@@ -108,12 +110,12 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="10,0,0,0">
                                 <TextBlock Text="新建或更新连接配置" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="保存后会出现在左侧会话列表；保存并打开会同时启动会话。SSH 共享默认对串口会话自动开桥，API 共享默认纳入本地 HTTP API。" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="保存后会出现在左侧会话列表；保存并打开会同时启动会话。SSH 共享默认会为当前连接自动开桥，API 共享默认纳入本地 HTTP API。" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
 
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
                                         <TextBlock Text="PowerShell" FontSize="18" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="PowerShellTitleTextBox" Text="本地 PowerShell"/>
+                                        <TextBox x:Name="PowerShellTitleTextBox" Text="PowerShell 会话"/>
                                         <TextBox x:Name="PowerShellProgramTextBox"/>
                                         <TextBox x:Name="PowerShellArgsTextBox"/>
                                         <TextBox x:Name="PowerShellWorkdirTextBox"/>
@@ -333,7 +335,7 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="10,0,0,0">
                                 <TextBlock Text="服务与共享" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Text="API 是全局服务；配置会话上的 API 共享只决定哪些打开中的会话会被暴露给接口。串口会话若开启 SSH 共享，会在打开时自动启动桥接。" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                <TextBlock Text="API 是全局服务；配置会话上的 API 共享只决定哪些打开中的会话会被暴露给接口。开启 SSH 共享的会话在打开时会自动启动桥接。" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
 
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
@@ -349,9 +351,9 @@
 
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16">
                                     <StackPanel>
-                                        <TextBlock Text="串口 SSH Bridge" FontSize="18" FontWeight="SemiBold"/>
-                                        <TextBlock Text="这里只保留串口选择、端口保存和手工打开。保存后，开启了 SSH 共享的串口会话在下次打开时会自动套用该端口。" Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
-                                        <ComboBox x:Name="BridgeSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="PortKey" SelectionChanged="BridgeSessionComboBox_SelectionChanged"/>
+                                        <TextBlock Text="SSH Bridge" FontSize="18" FontWeight="SemiBold"/>
+                                        <TextBlock Text="这里可为任意会话保存桥接端口或手工打开共享。默认端口会按会话类型自动分配：Telnet 23xx、SSH 24xx、PowerShell 25xx。" Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <ComboBox x:Name="BridgeSessionComboBox" DisplayMemberPath="Label" SelectedValuePath="BridgeKey" SelectionChanged="BridgeSessionComboBox_SelectionChanged"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
                                             <TextBlock Text="端口" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
                                             <TextBox x:Name="BridgePortTextBox" Width="140" Text=""/>

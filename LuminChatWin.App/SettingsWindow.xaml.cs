@@ -64,9 +64,9 @@ public partial class SettingsWindow : Window
 
     private void BuildTerminal()
     {
-        AddCheckBox(TerminalPanel, "serial_bridge_enabled", "启用串口 SSH Bridge", _draft.Terminal.SerialSshBridge.Enabled);
+        AddCheckBox(TerminalPanel, "serial_bridge_enabled", "启用 SSH Bridge", _draft.Terminal.SerialSshBridge.Enabled);
         AddTextBox(TerminalPanel, "serial_bridge_bind_host", "绑定主机", _draft.Terminal.SerialSshBridge.BindHost);
-        AddTextBox(TerminalPanel, "serial_bridge_port_prefix", "默认端口前缀", _draft.Terminal.SerialSshBridge.PortPrefix);
+        AddTextBox(TerminalPanel, "serial_bridge_port_prefix", "串口默认端口前缀", _draft.Terminal.SerialSshBridge.PortPrefix);
         AddTextBox(TerminalPanel, "serial_bridge_username", "桥接用户名（留空表示接受任意用户名）", _draft.Terminal.SerialSshBridge.Username);
         AddTextBox(TerminalPanel, "serial_bridge_password", "桥接密码（留空表示空密码）", _draft.Terminal.SerialSshBridge.Password);
         AddTextBox(TerminalPanel, "serial_bridge_exec_timeout", "命令超时秒数", _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds.ToString("0.##"));

@@ -40,7 +40,7 @@ public sealed class TerminalProfileStore
         {
             existingIndex = profiles.FindIndex(item =>
                 item.Kind == profile.Kind &&
-                string.Equals(item.Title, profile.Title, StringComparison.OrdinalIgnoreCase));
+                string.Equals(item.Descriptor, profile.Descriptor, StringComparison.OrdinalIgnoreCase));
         }
 
         if (existingIndex >= 0)

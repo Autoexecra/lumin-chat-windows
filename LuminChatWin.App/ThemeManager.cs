@@ -42,7 +42,8 @@ public static class ThemeManager
         new("steel-blueprint", "Steel Blueprint", "#FFF0F4F7", "#FFFBFCFD", "#FFD9E2EA", "#FF3A607F", "#FFC7D6E5", "#FF1F2C35", "#FF687985", "#FFB3C5D3", "#FF3D8B73", "#FFB88724", "#FFC44E55", "Bahnschrift"),
         new("grape-soda", "Grape Soda", "#FFF9F1FB", "#FFFFFBFF", "#FFF0D7F4", "#FF9A49B3", "#FFE4BAEF", "#FF372239", "#FF86698A", "#FFD9A9E1", "#FF40906C", "#FFC58B1B", "#FFD6546D", "Segoe UI"),
         new("desert-night", "Desert Night", "#FF171310", "#FF231D18", "#FF342A22", "#FFD08E42", "#FF4E3827", "#FFF8F0E7", "#FFC0AA97", "#FF5E4A39", "#FF56B184", "#FFE0AD48", "#FFEF7A6E", "Segoe UI"),
-        new("aqua-notebook", "Aqua Notebook", "#FFEFFBFB", "#FFFCFFFF", "#FFD7F1F0", "#FF149AA4", "#FFB8E7E4", "#FF1A3132", "#FF607D7E", "#FFAED5D3", "#FF2A8F72", "#FFC48F21", "#FFD24F57", "Segoe UI")
+        new("aqua-notebook", "Aqua Notebook", "#FFEFFBFB", "#FFFCFFFF", "#FFD7F1F0", "#FF149AA4", "#FFB8E7E4", "#FF1A3132", "#FF607D7E", "#FFAED5D3", "#FF2A8F72", "#FFC48F21", "#FFD24F57", "Segoe UI"),
+        new("aurora-command", "Aurora Command", "#FFDFE8F8", "#FFFFFFFF", "#FFF2F7FF", "#FF4D80FF", "#FFE7EEFF", "#FF13243D", "#FF647995", "#FFC8D6EA", "#FF0E8D68", "#FFD97706", "#FFD93052", "Segoe UI")
     ];
 
     public static ThemePalette GetTheme(string? themeId)

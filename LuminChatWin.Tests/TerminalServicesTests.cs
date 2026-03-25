@@ -66,22 +66,24 @@ public sealed class TerminalServicesTests
     }
 
     [Theory]
-    [InlineData("22", "COM1 @ 115200", "session-a", 2201)]
-    [InlineData("22", "COM12 @ 115200", "session-b", 2212)]
-    [InlineData("22", "ttyUSB105 @ 115200", "session-c", 2205)]
-    public void TerminalSessionManager_BuildDefaultBridgePort_UsesTwoDigitSerialSuffix(string prefix, string descriptor, string sessionId, int expectedPort)
+    [InlineData(TerminalSessionKind.Serial, "22", new int[0], 2201)]
+    [InlineData(TerminalSessionKind.Telnet, "22", new int[0], 2301)]
+    [InlineData(TerminalSessionKind.Ssh, "22", new int[0], 2401)]
+    [InlineData(TerminalSessionKind.PowerShell, "22", new int[0], 2501)]
+    [InlineData(TerminalSessionKind.Ssh, "22", new[] { 2401, 2402 }, 2403)]
+    public void TerminalSessionManager_BuildDefaultBridgePort_AllocatesFirstFreePort(TerminalSessionKind kind, string prefix, int[] usedPorts, int expectedPort)
     {
-        var port = TerminalSessionManager.BuildDefaultBridgePort(prefix, descriptor, sessionId);
+        var port = TerminalSessionManager.BuildDefaultBridgePort(kind, prefix, usedPorts);
         Assert.Equal(expectedPort, port);
     }
 
     [Theory]
-    [InlineData("COM12 @ 115200", "COM12")]
-    [InlineData("ttyUSB7 @ 921600", "ttyUSB7")]
-    [InlineData(" COM3   @ 9600 ", "COM3")]
-    public void TerminalSessionManager_ResolveBridgeOverrideKey_UsesStableSerialKey(string descriptor, string expectedKey)
+    [InlineData(TerminalSessionKind.Serial, "COM12 @ 115200", "Serial:COM12 @ 115200")]
+    [InlineData(TerminalSessionKind.Ssh, "root@192.168.1.20:22", "Ssh:root@192.168.1.20:22")]
+    [InlineData(TerminalSessionKind.PowerShell, "pwsh | C:\\work", "PowerShell:pwsh | C:\\work")]
+    public void TerminalSessionManager_ResolveBridgeOverrideKey_UsesKindScopedDescriptor(TerminalSessionKind kind, string descriptor, string expectedKey)
     {
-        Assert.Equal(expectedKey, TerminalSessionManager.ResolveBridgeOverrideKey(descriptor));
+        Assert.Equal(expectedKey, TerminalSessionManager.ResolveBridgeOverrideKey(kind, descriptor));
     }
 
     [Fact]

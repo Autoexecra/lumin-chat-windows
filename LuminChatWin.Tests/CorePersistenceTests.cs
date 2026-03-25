@@ -64,6 +64,47 @@ public sealed class CorePersistenceTests
         Assert.False(string.IsNullOrWhiteSpace(profile.LastUsedAt));
     }
 
+    [Fact]
+    public void TerminalProfileStore_UsesConnectionDescriptorAsIdentity()
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "terminal-profiles.json");
+        var store = new TerminalProfileStore(() => path);
+
+        store.Save(new TerminalSessionProfile
+        {
+            Title = "SSH 会话",
+            Kind = TerminalSessionKind.Ssh,
+            Host = "192.168.1.20",
+            Port = 22,
+            Username = "root",
+        });
+
+        store.Save(new TerminalSessionProfile
+        {
+            Title = "SSH 会话",
+            Kind = TerminalSessionKind.Ssh,
+            Host = "192.168.1.21",
+            Port = 22,
+            Username = "root",
+        });
+
+        store.Save(new TerminalSessionProfile
+        {
+            Title = "另一个名字",
+            Kind = TerminalSessionKind.Ssh,
+            Host = "192.168.1.20",
+            Port = 22,
+            Username = "root",
+            ApiShared = false,
+        });
+
+        var profiles = store.List();
+        Assert.Equal(2, profiles.Count);
+        Assert.Contains(profiles, profile => profile.Title == "另一个名字" && profile.Host == "192.168.1.20" && !profile.ApiShared);
+        Assert.Contains(profiles, profile => profile.Host == "192.168.1.21");
+    }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "LuminChatWinTests", Guid.NewGuid().ToString("N"));
