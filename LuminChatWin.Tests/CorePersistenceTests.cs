@@ -89,20 +89,41 @@ public sealed class CorePersistenceTests
             Username = "root",
         });
 
+        var profiles = store.List();
+        Assert.Equal(2, profiles.Count);
+        Assert.Contains(profiles, item => item.Descriptor == "root@192.168.1.20:22");
+        Assert.Contains(profiles, item => item.Descriptor == "root@192.168.1.21:22");
+    }
+
+    [Fact]
+    public void TerminalProfileStore_UpdatesExistingProfileWhenDescriptorMatches()
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "terminal-profiles.json");
+        var store = new TerminalProfileStore(() => path);
+
         store.Save(new TerminalSessionProfile
         {
-            Title = "另一个名字",
+            Title = "SSH 会话",
             Kind = TerminalSessionKind.Ssh,
             Host = "192.168.1.20",
             Port = 22,
             Username = "root",
-            ApiShared = false,
+        });
+
+        store.Save(new TerminalSessionProfile
+        {
+            Title = "已改名",
+            Kind = TerminalSessionKind.Ssh,
+            Host = "192.168.1.20",
+            Port = 22,
+            Username = "root",
         });
 
         var profiles = store.List();
-        Assert.Equal(2, profiles.Count);
-        Assert.Contains(profiles, profile => profile.Title == "另一个名字" && profile.Host == "192.168.1.20" && !profile.ApiShared);
-        Assert.Contains(profiles, profile => profile.Host == "192.168.1.21");
+        var profile = Assert.Single(profiles);
+        Assert.Equal("已改名", profile.Title);
+        Assert.Equal("root@192.168.1.20:22", profile.Descriptor);
     }
 
     private static string CreateTempDirectory()

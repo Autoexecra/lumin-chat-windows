@@ -66,12 +66,12 @@ public partial class SettingsWindow : Window
     {
         AddCheckBox(TerminalPanel, "serial_bridge_enabled", "启用 SSH Bridge", _draft.Terminal.SerialSshBridge.Enabled);
         AddTextBox(TerminalPanel, "serial_bridge_bind_host", "绑定主机", _draft.Terminal.SerialSshBridge.BindHost);
-        AddTextBox(TerminalPanel, "serial_bridge_port_prefix", "串口默认端口前缀", _draft.Terminal.SerialSshBridge.PortPrefix);
+        AddTextBox(TerminalPanel, "serial_bridge_port_prefix", "串口默认端口前缀（串口使用 22xx）", _draft.Terminal.SerialSshBridge.PortPrefix);
         AddTextBox(TerminalPanel, "serial_bridge_username", "桥接用户名（留空表示接受任意用户名）", _draft.Terminal.SerialSshBridge.Username);
         AddTextBox(TerminalPanel, "serial_bridge_password", "桥接密码（留空表示空密码）", _draft.Terminal.SerialSshBridge.Password);
         AddTextBox(TerminalPanel, "serial_bridge_exec_timeout", "命令超时秒数", _draft.Terminal.SerialSshBridge.ExecTimeoutSeconds.ToString("0.##"));
         AddTextBox(TerminalPanel, "serial_bridge_host_key_path", "Host Key 路径", _draft.Terminal.SerialSshBridge.HostKeyPath);
-        AddInfoText(TerminalPanel, "标准 SSH 协议必须带用户名，无法真正做到完全无账号；当前实现支持用户名留空时接受任意用户名，密码留空时允许空密码。", new Thickness(0, 6, 0, 0));
+        AddInfoText(TerminalPanel, "标准 SSH 协议必须带用户名，无法真正做到完全无账号；当前实现支持用户名留空时接受任意用户名，密码留空时允许空密码。默认 bridge 端口范围为串口 22xx、Telnet 23xx、SSH 24xx、PowerShell 25xx。", new Thickness(0, 6, 0, 0));
     }
 
     private void BuildCommandExecution()

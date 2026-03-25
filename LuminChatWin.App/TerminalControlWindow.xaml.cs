@@ -26,6 +26,7 @@ public partial class TerminalControlWindow : Window
     private string _promptObjective = string.Empty;
     private string? _loadedProfileId;
     private TerminalSessionKind? _loadedProfileKind;
+    private string? _loadedProfileDescriptor;
     private bool _agentBusy;
     private double _lastExpandedNavigationPaneWidth = ExpandedNavigationPaneWidth;
 
@@ -33,7 +34,6 @@ public partial class TerminalControlWindow : Window
     {
         _runtime = runtime;
         InitializeComponent();
-        ClampWindowToDesktop();
 
         ProfilesListBox.ItemsSource = _profiles;
         OpenSessionsTabControl.ItemsSource = _openSessions;
@@ -50,6 +50,7 @@ public partial class TerminalControlWindow : Window
         _runtime.TerminalSessions.OutputReceived += TerminalSessions_OutputReceived;
         _runtime.ConfigChanged += Runtime_ConfigChanged;
         Closed += TerminalControlWindow_Closed;
+        Loaded += (_, _) => ClampWindowToDesktop();
 
         RefreshSerialPorts();
         RefreshProfiles();
@@ -59,7 +60,7 @@ public partial class TerminalControlWindow : Window
         RefreshPromptTargets();
         RefreshApiSummary();
         RefreshBridgeTargets();
-        ProfileHintTextBlock.Text = "会话开启 SSH 共享后会在打开时自动启动桥接，API 共享则决定是否暴露到本地 HTTP API。";
+        ProfileHintTextBlock.Text = "开启 SSH 共享的会话会在打开时自动启动 SSH bridge，API 共享则决定是否暴露到本地 HTTP API。";
         ResetRequestStatus(AgentStatusTextBlock);
         AgentSummaryTextBlock.Text = "未开始执行。选择目标会话、模型和需求后发送给 Agent。";
         ResetRequestStatus(PromptStatusTextBlock);
@@ -275,7 +276,8 @@ public partial class TerminalControlWindow : Window
 
         try
         {
-            _runtime.TerminalProfiles.SetSshShared(profile.ProfileId, !profile.Profile.SshShared);
+            var updated = _runtime.TerminalProfiles.SetSshShared(profile.ProfileId, !profile.Profile.SshShared);
+            EnsureBridgePortAssignment(updated);
             RefreshProfiles(profile.ProfileId);
             SetWindowStatus($"已切换 SSH 共享：{profile.Title}", isMuted: true);
         }
@@ -582,13 +584,17 @@ public partial class TerminalControlWindow : Window
             }
 
             var config = _runtime.ConfigService.LoadOrCreate();
-            config.Terminal.SerialSshBridge.PortOverrides[target.BridgeKey] = port;
+            config.Terminal.SerialSshBridge.PortOverrides[target.PortKey] = port;
+            if (!string.IsNullOrWhiteSpace(target.LegacyPortKey))
+            {
+                config.Terminal.SerialSshBridge.PortOverrides.Remove(target.LegacyPortKey);
+            }
             _runtime.SaveConfig(config);
             var usernameHint = string.IsNullOrWhiteSpace(config.Terminal.SerialSshBridge.Username) ? "任意用户名" : config.Terminal.SerialSshBridge.Username;
             var passwordHint = string.IsNullOrEmpty(config.Terminal.SerialSshBridge.Password) ? "空密码" : "已配置密码";
             BridgeStatusTextBlock.Text = $"已保存 {target.Label} 的共享端口: {config.Terminal.SerialSshBridge.BindHost}:{port}，账号: {usernameHint}，认证: {passwordHint}";
-            SetWindowStatus($"已保存 SSH Bridge 端口：{target.Label} -> {port}", isMuted: true);
-            RefreshBridgeTargets(target.BridgeKey);
+            SetWindowStatus($"已保存 SSH bridge 端口：{target.Label} -> {port}", isMuted: true);
+            RefreshBridgeTargets(target.PortKey);
         }
         catch (Exception ex)
         {
@@ -605,27 +611,15 @@ public partial class TerminalControlWindow : Window
 
         if (string.IsNullOrWhiteSpace(target.SessionId))
         {
-            MessageBox.Show(this, "这个会话当前没有打开。请先打开对应会话，再手工打开共享端口。", "SSH Bridge", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "这个会话当前没有打开实例。请先打开对应会话，再手工打开共享端口。", "SSH Bridge", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         try
         {
-            int? requestedPort = null;
-            if (!string.IsNullOrWhiteSpace(BridgePortTextBox.Text))
-            {
-                var parsedPort = ParseInt(BridgePortTextBox.Text, 0);
-                if (parsedPort <= 0)
-                {
-                    throw new InvalidOperationException("桥接端口必须是有效的正整数。") ;
-                }
-
-                requestedPort = parsedPort;
-            }
-
             var bridge = await _runtime.TerminalSessions.StartSerialBridgeAsync(
                 target.SessionId,
-                requestedPort);
+                string.IsNullOrWhiteSpace(BridgePortTextBox.Text) ? null : ParseInt(BridgePortTextBox.Text, target.SuggestedPort));
             BridgeStatusTextBlock.Text = $"{target.Label}: {bridge.Protocol}://{bridge.Host}:{bridge.Port}  {bridge.Message}";
             SetWindowStatus($"已打开共享端口：{target.Label} -> {bridge.Host}:{bridge.Port}", isMuted: true);
         }
@@ -642,13 +636,7 @@ public partial class TerminalControlWindow : Window
             return;
         }
 
-        if (_runtime.Config.Terminal.SerialSshBridge.PortOverrides.TryGetValue(target.BridgeKey, out var savedPort))
-        {
-            BridgePortTextBox.Text = savedPort.ToString();
-            return;
-        }
-
-        BridgePortTextBox.Text = string.Empty;
+        BridgePortTextBox.Text = ResolveConfiguredBridgePort(target).ToString();
     }
 
     private void OpenSessionsTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -794,9 +782,11 @@ public partial class TerminalControlWindow : Window
         try
         {
             var saved = _runtime.TerminalProfiles.Save(profile);
+            EnsureBridgePortAssignment(saved);
             RefreshProfiles(saved.ProfileId);
             _loadedProfileId = saved.ProfileId;
             _loadedProfileKind = saved.Kind;
+            _loadedProfileDescriptor = saved.Descriptor;
             ProfileHintTextBlock.Text = $"已保存 {saved.KindLabel} 配置：{saved.Title}";
             SetWindowStatus($"已保存配置会话：{saved.Title}", isMuted: true);
             if (openAfterSave)
@@ -870,7 +860,7 @@ public partial class TerminalControlWindow : Window
             if (profile.SshShared && session.SupportsBridge)
             {
                 var bridge = await _runtime.TerminalSessions.StartSerialBridgeAsync(session.SessionId);
-                BridgeStatusTextBlock.Text = $"自动桥接已开启: {bridge.Protocol}://{bridge.Host}:{bridge.Port}";
+                BridgeStatusTextBlock.Text = $"自动 SSH bridge 已开启: {bridge.Protocol}://{bridge.Host}:{bridge.Port}";
             }
 
             RefreshProfiles(profile.ProfileId);
@@ -990,34 +980,47 @@ public partial class TerminalControlWindow : Window
         var openTargets = _openSessions
             .Where(item => item.Session.SupportsBridge)
             .Select(item => new BridgeTargetItem(
-                BuildBridgeTargetKey(item.Session.Kind, item.Descriptor),
+                item.Session.Kind,
+                ResolveBridgePortKey(item.Session.Kind, item.Descriptor),
                 $"{item.KindLabel} | {item.Title} | {item.Descriptor}",
-                item.SessionId))
-            .Where(item => !string.IsNullOrWhiteSpace(item.BridgeKey))
+                item.SessionId,
+                0,
+                ResolveLegacyBridgePortKey(item.Session.Kind, item.Descriptor)))
+            .Where(item => !string.IsNullOrWhiteSpace(item.PortKey))
             .ToList();
 
         var configuredTargets = _runtime.TerminalProfiles.List()
+            .Where(item => SupportsBridge(item.Kind))
             .Select(item =>
             {
-                var bridgeKey = BuildBridgeTargetKey(item.Kind, item.Descriptor);
-                var openMatch = openTargets.FirstOrDefault(open => string.Equals(open.BridgeKey, bridgeKey, StringComparison.OrdinalIgnoreCase));
-                return new BridgeTargetItem(bridgeKey, $"{item.KindLabel} | {item.Title} | {item.Descriptor}", openMatch?.SessionId);
+                var portKey = ResolveBridgePortKey(item.Kind, item.Descriptor);
+                var openMatch = openTargets.FirstOrDefault(open => string.Equals(open.PortKey, portKey, StringComparison.OrdinalIgnoreCase));
+                return new BridgeTargetItem(item.Kind, portKey, $"{item.KindLabel} | {item.Title} | {item.Descriptor}", openMatch?.SessionId, 0, ResolveLegacyBridgePortKey(item.Kind, item.Descriptor));
             })
-            .Where(item => !string.IsNullOrWhiteSpace(item.BridgeKey))
+            .Where(item => !string.IsNullOrWhiteSpace(item.PortKey))
             .ToList();
 
+        var config = _runtime.Config.Terminal.SerialSshBridge;
+        var occupiedPorts = new HashSet<int>(config.PortOverrides.Values);
         var items = openTargets
             .Concat(configuredTargets)
-            .GroupBy(item => item.BridgeKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(item => item.PortKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
-            .OrderBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(item => item.Kind)
+            .ThenBy(item => item.PortKey, StringComparer.OrdinalIgnoreCase)
+            .Select(item =>
+            {
+                var suggestedPort = ResolveConfiguredBridgePort(item, occupiedPorts);
+                occupiedPorts.Add(suggestedPort);
+                return item with { SuggestedPort = suggestedPort };
+            })
             .ToList();
 
-        var selected = preferredPortKey ?? (BridgeSessionComboBox.SelectedItem as BridgeTargetItem)?.BridgeKey;
+        var selected = preferredPortKey ?? (BridgeSessionComboBox.SelectedItem as BridgeTargetItem)?.PortKey;
         BridgeSessionComboBox.ItemsSource = items;
         if (!string.IsNullOrWhiteSpace(selected))
         {
-            BridgeSessionComboBox.SelectedItem = items.FirstOrDefault(item => string.Equals(item.BridgeKey, selected, StringComparison.OrdinalIgnoreCase));
+            BridgeSessionComboBox.SelectedItem = items.FirstOrDefault(item => string.Equals(item.PortKey, selected, StringComparison.OrdinalIgnoreCase));
         }
         else if (items.Count > 0)
         {
@@ -1214,6 +1217,7 @@ public partial class TerminalControlWindow : Window
     {
         _loadedProfileId = profile.ProfileId;
         _loadedProfileKind = profile.Kind;
+        _loadedProfileDescriptor = profile.Descriptor;
         NavigationTabControl.SelectedIndex = 1;
 
         switch (profile.Kind)
@@ -1271,7 +1275,7 @@ public partial class TerminalControlWindow : Window
             SshShared = PowerShellSshSharedCheckBox.IsChecked == true,
         };
 
-        profile.ProfileId = ResolveLoadedProfileId(profile);
+        profile.ProfileId = ResolveLoadedProfileId(profile.Kind, profile.Descriptor);
         return profile;
     }
 
@@ -1289,7 +1293,7 @@ public partial class TerminalControlWindow : Window
             SshShared = SshSshSharedCheckBox.IsChecked == true,
         };
 
-        profile.ProfileId = ResolveLoadedProfileId(profile);
+        profile.ProfileId = ResolveLoadedProfileId(profile.Kind, profile.Descriptor);
         return profile;
     }
 
@@ -1305,7 +1309,7 @@ public partial class TerminalControlWindow : Window
             SshShared = TelnetSshSharedCheckBox.IsChecked == true,
         };
 
-        profile.ProfileId = ResolveLoadedProfileId(profile);
+        profile.ProfileId = ResolveLoadedProfileId(profile.Kind, profile.Descriptor);
         return profile;
     }
 
@@ -1324,26 +1328,16 @@ public partial class TerminalControlWindow : Window
             SshShared = SerialSshSharedCheckBox.IsChecked == true,
         };
 
-        profile.ProfileId = ResolveLoadedProfileId(profile);
+        profile.ProfileId = ResolveLoadedProfileId(profile.Kind, profile.Descriptor);
         return profile;
     }
 
-    private string ResolveLoadedProfileId(TerminalSessionProfile profile)
+    private string ResolveLoadedProfileId(TerminalSessionKind kind, string descriptor)
     {
-        if (_loadedProfileId is null || _loadedProfileKind != profile.Kind)
-        {
-            return string.Empty;
-        }
-
-        var loadedProfile = _runtime.TerminalProfiles.List()
-            .FirstOrDefault(item => string.Equals(item.ProfileId, _loadedProfileId, StringComparison.OrdinalIgnoreCase));
-        if (loadedProfile is null)
-        {
-            return string.Empty;
-        }
-
-        return string.Equals(loadedProfile.Descriptor, profile.Descriptor, StringComparison.OrdinalIgnoreCase)
-            ? loadedProfile.ProfileId
+        return _loadedProfileId is not null &&
+               _loadedProfileKind == kind &&
+               string.Equals(_loadedProfileDescriptor, descriptor, StringComparison.OrdinalIgnoreCase)
+            ? _loadedProfileId
             : string.Empty;
     }
 
@@ -1513,7 +1507,68 @@ public partial class TerminalControlWindow : Window
         return null;
     }
 
-    private static string BuildBridgeTargetKey(TerminalSessionKind kind, string descriptor)
+    private static bool SupportsBridge(TerminalSessionKind kind)
+    {
+        return kind is TerminalSessionKind.PowerShell or TerminalSessionKind.Ssh or TerminalSessionKind.Telnet or TerminalSessionKind.Serial;
+    }
+
+    private void EnsureBridgePortAssignment(TerminalSessionProfile profile)
+    {
+        if (!profile.SshShared || !SupportsBridge(profile.Kind))
+        {
+            return;
+        }
+
+        var portKey = ResolveBridgePortKey(profile.Kind, profile.Descriptor);
+        if (string.IsNullOrWhiteSpace(portKey))
+        {
+            return;
+        }
+
+        var config = _runtime.ConfigService.LoadOrCreate();
+        if (config.Terminal.SerialSshBridge.PortOverrides.ContainsKey(portKey))
+        {
+            return;
+        }
+
+        var legacyPortKey = ResolveLegacyBridgePortKey(profile.Kind, profile.Descriptor);
+        if (!string.IsNullOrWhiteSpace(legacyPortKey) && config.Terminal.SerialSshBridge.PortOverrides.ContainsKey(legacyPortKey))
+        {
+            var existingPort = config.Terminal.SerialSshBridge.PortOverrides[legacyPortKey];
+            config.Terminal.SerialSshBridge.PortOverrides[portKey] = existingPort;
+            config.Terminal.SerialSshBridge.PortOverrides.Remove(legacyPortKey);
+            _runtime.SaveConfig(config);
+            return;
+        }
+
+        var port = BuildDefaultBridgePort(profile.Kind, config.Terminal.SerialSshBridge.PortPrefix, config.Terminal.SerialSshBridge.PortOverrides.Values);
+        config.Terminal.SerialSshBridge.PortOverrides[portKey] = port;
+        _runtime.SaveConfig(config);
+    }
+
+    private int ResolveConfiguredBridgePort(BridgeTargetItem target)
+    {
+        return ResolveConfiguredBridgePort(target, null);
+    }
+
+    private int ResolveConfiguredBridgePort(BridgeTargetItem target, ISet<int>? occupiedPorts)
+    {
+        var config = _runtime.Config.Terminal.SerialSshBridge;
+        if (config.PortOverrides.TryGetValue(target.PortKey, out var savedPort))
+        {
+            return savedPort;
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.LegacyPortKey) && config.PortOverrides.TryGetValue(target.LegacyPortKey, out savedPort))
+        {
+            return savedPort;
+        }
+
+        IEnumerable<int> reservedPorts = occupiedPorts is null ? config.PortOverrides.Values : occupiedPorts;
+        return BuildDefaultBridgePort(target.Kind, config.PortPrefix, reservedPorts);
+    }
+
+    private static string ResolveBridgePortKey(TerminalSessionKind kind, string descriptor)
     {
         if (string.IsNullOrWhiteSpace(descriptor))
         {
@@ -1523,17 +1578,50 @@ public partial class TerminalControlWindow : Window
         return $"{kind}:{descriptor.Trim()}";
     }
 
+    private static string? ResolveLegacyBridgePortKey(TerminalSessionKind kind, string descriptor)
+    {
+        if (kind != TerminalSessionKind.Serial || string.IsNullOrWhiteSpace(descriptor))
+        {
+            return null;
+        }
+
+        return descriptor.Split('@', 2, StringSplitOptions.TrimEntries)[0].Trim();
+    }
+
+    private static int BuildDefaultBridgePort(TerminalSessionKind kind, string serialPortPrefix, IEnumerable<int> occupiedPorts)
+    {
+        var prefix = kind switch
+        {
+            TerminalSessionKind.Telnet => 23,
+            TerminalSessionKind.Ssh => 24,
+            TerminalSessionKind.PowerShell => 25,
+            TerminalSessionKind.Serial when int.TryParse(serialPortPrefix, out var parsedPrefix) => parsedPrefix,
+            TerminalSessionKind.Serial => 22,
+            _ => 22,
+        };
+
+        var occupied = new HashSet<int>(occupiedPorts.Where(port => port / 100 == prefix));
+        for (var suffix = 1; suffix <= 99; suffix++)
+        {
+            var candidate = prefix * 100 + suffix;
+            if (!occupied.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new InvalidOperationException($"No free SSH bridge port left in range {prefix}01-{prefix}99.");
+    }
+
     private void ClampWindowToDesktop()
     {
         var workArea = SystemParameters.WorkArea;
-        var maxWidth = Math.Max(640d, workArea.Width - 24d);
-        var maxHeight = Math.Max(520d, workArea.Height - 24d);
-        MaxWidth = maxWidth;
-        MaxHeight = maxHeight;
-        MinWidth = Math.Min(MinWidth, maxWidth);
-        MinHeight = Math.Min(MinHeight, maxHeight);
-        Width = Math.Min(Width, maxWidth);
-        Height = Math.Min(Height, maxHeight);
+        MaxWidth = workArea.Width;
+        MaxHeight = workArea.Height;
+        Width = Math.Min(Width, workArea.Width);
+        Height = Math.Min(Height, workArea.Height);
+        Left = Math.Max(workArea.Left, workArea.Left + (workArea.Width - Width) / 2d);
+        Top = Math.Max(workArea.Top, workArea.Top + (workArea.Height - Height) / 2d);
     }
 
     private void SetWindowStatus(string message, bool isMuted)
@@ -1654,5 +1742,5 @@ public partial class TerminalControlWindow : Window
 
     private sealed record AgentModelOption(string Key, string Label);
     private sealed record AgentTargetSessionItem(string SessionId, string Label);
-    private sealed record BridgeTargetItem(string BridgeKey, string Label, string? SessionId);
+    private sealed record BridgeTargetItem(TerminalSessionKind Kind, string PortKey, string Label, string? SessionId, int SuggestedPort, string? LegacyPortKey);
 }

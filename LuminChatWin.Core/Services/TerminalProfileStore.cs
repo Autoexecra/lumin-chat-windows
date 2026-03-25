@@ -34,17 +34,19 @@ public sealed class TerminalProfileStore
         var now = DateTime.UtcNow.ToString("O");
         profile.ProfileId = string.IsNullOrWhiteSpace(profile.ProfileId) ? Guid.NewGuid().ToString("N") : profile.ProfileId;
         profile.CreatedAt = string.IsNullOrWhiteSpace(profile.CreatedAt) ? now : profile.CreatedAt;
+        var descriptor = NormalizeDescriptor(profile.Descriptor);
 
         var existingIndex = profiles.FindIndex(item => string.Equals(item.ProfileId, profile.ProfileId, StringComparison.OrdinalIgnoreCase));
         if (existingIndex < 0)
         {
             existingIndex = profiles.FindIndex(item =>
                 item.Kind == profile.Kind &&
-                string.Equals(item.Descriptor, profile.Descriptor, StringComparison.OrdinalIgnoreCase));
+                string.Equals(NormalizeDescriptor(item.Descriptor), descriptor, StringComparison.OrdinalIgnoreCase));
         }
 
         if (existingIndex >= 0)
         {
+            profile.ProfileId = profiles[existingIndex].ProfileId;
             profile.CreatedAt = profiles[existingIndex].CreatedAt;
             profiles[existingIndex] = profile;
         }
@@ -122,5 +124,10 @@ public sealed class TerminalProfileStore
         var path = StorePath;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(profiles, JsonOptions));
+    }
+
+    private static string NormalizeDescriptor(string descriptor)
+    {
+        return descriptor.Trim();
     }
 }

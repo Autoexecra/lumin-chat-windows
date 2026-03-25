@@ -11,7 +11,6 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 {
     private static readonly Regex AnsiControlSequenceRegex = new("\\x1B\\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
     private static readonly Regex AnsiOperatingSystemCommandRegex = new("\\x1B\\][^\\a]*(\\a|\\x1B\\\\)", RegexOptions.Compiled);
-    private static readonly Regex DescriptorNumberRegex = new("(\\d+)", RegexOptions.Compiled);
     private const string TerminalEnter = "\n";
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<TerminalFeatureConfig> _configAccessor;
@@ -116,10 +115,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     public async Task<TerminalSessionInfo> CreatePowerShellSessionAsync(TerminalPowerShellOptions options, CancellationToken cancellationToken = default)
     {
         var backend = new PowerShellTerminalBackend(options.Program, options.Arguments, options.WorkingDirectory);
-        var descriptor = string.IsNullOrWhiteSpace(options.WorkingDirectory)
-            ? options.Program
-            : $"{options.Program} | {options.WorkingDirectory}";
-        return await AddSessionAsync(options.Title, TerminalSessionKind.PowerShell, descriptor, true, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
+        return await AddSessionAsync(options.Title, TerminalSessionKind.PowerShell, options.WorkingDirectory, true, options.ApiShared, options.SshShared, backend, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<TerminalSessionInfo> CreateSshSessionAsync(TerminalSshOptions options, CancellationToken cancellationToken = default)
@@ -258,7 +254,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         var session = GetRequiredSession(sessionId);
         if (!session.Info.SupportsBridge)
         {
-            throw new InvalidOperationException("This session type does not support SSH bridge sharing.");
+            throw new InvalidOperationException("This session type does not support SSH bridge.");
         }
 
         if (_bridges.TryGetValue(sessionId, out var existing))
@@ -469,9 +465,24 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return explicitPort;
         }
 
-        var usedPorts = config.SerialSshBridge.PortOverrides.Values
-            .Concat(_bridges.Values.Select(item => item.Info.Port));
-        return BuildDefaultBridgePort(info.Kind, config.SerialSshBridge.PortPrefix, usedPorts);
+        foreach (var legacyKey in ResolveLegacyBridgeOverrideKeys(info.Kind, info.Descriptor))
+        {
+            if (config.SerialSshBridge.PortOverrides.TryGetValue(legacyKey, out explicitPort))
+            {
+                return explicitPort;
+            }
+        }
+
+        var occupiedPorts = config.SerialSshBridge.PortOverrides
+            .Where(entry => !string.Equals(entry.Key, info.SessionId, StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(entry.Key, descriptorKey, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.Value)
+            .Concat(_bridges
+                .Where(entry => !string.Equals(entry.Key, info.SessionId, StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.Value.Info.Port))
+            .ToList();
+
+        return BuildDefaultBridgePort(info.Kind, config.SerialSshBridge.PortPrefix, occupiedPorts);
     }
 
     internal static string ResolveBridgeOverrideKey(TerminalSessionKind kind, string descriptor)
@@ -484,43 +495,47 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         return $"{kind}:{descriptor.Trim()}";
     }
 
-    internal static int BuildDefaultBridgePort(TerminalSessionKind kind, string portPrefix, IEnumerable<int> usedPorts)
+    internal static int BuildDefaultBridgePort(TerminalSessionKind kind, string serialPortPrefix, IEnumerable<int>? occupiedPorts = null)
     {
-        var (rangeStart, rangeEnd) = ResolveBridgePortRange(kind, portPrefix);
-        var allocatedPorts = new HashSet<int>(usedPorts.Where(port => port >= rangeStart && port <= rangeEnd));
-        for (var port = rangeStart; port <= rangeEnd; port++)
+        var prefix = ResolveBridgePortPrefix(kind, serialPortPrefix);
+        var occupied = new HashSet<int>((occupiedPorts ?? []).Where(port => port / 100 == prefix));
+        for (var suffix = 1; suffix <= 99; suffix++)
         {
-            if (!allocatedPorts.Contains(port))
+            var candidate = prefix * 100 + suffix;
+            if (!occupied.Contains(candidate))
             {
-                return port;
+                return candidate;
             }
         }
 
-        throw new InvalidOperationException($"No available SSH bridge ports remain in range {rangeStart}-{rangeEnd} for {kind} sessions.");
+        throw new InvalidOperationException($"No free SSH bridge port left in range {prefix}01-{prefix}99.");
     }
 
-    private static (int RangeStart, int RangeEnd) ResolveBridgePortRange(TerminalSessionKind kind, string portPrefix)
+    internal static int ResolveBridgePortPrefix(TerminalSessionKind kind, string serialPortPrefix)
     {
         return kind switch
         {
-            TerminalSessionKind.Telnet => (2301, 2399),
-            TerminalSessionKind.Ssh => (2401, 2499),
-            TerminalSessionKind.PowerShell => (2501, 2599),
-            _ => BuildPrefixedPortRange(portPrefix),
+            TerminalSessionKind.Telnet => 23,
+            TerminalSessionKind.Ssh => 24,
+            TerminalSessionKind.PowerShell => 25,
+            TerminalSessionKind.Serial when int.TryParse(serialPortPrefix, out var parsedPrefix) => parsedPrefix,
+            TerminalSessionKind.Serial => 22,
+            _ => 22,
         };
     }
 
-    private static (int RangeStart, int RangeEnd) BuildPrefixedPortRange(string portPrefix)
+    internal static IEnumerable<string> ResolveLegacyBridgeOverrideKeys(TerminalSessionKind kind, string descriptor)
     {
-        var prefix = int.TryParse(portPrefix, out var parsedPrefix) ? parsedPrefix : 22;
-        prefix = prefix switch
+        if (kind != TerminalSessionKind.Serial || string.IsNullOrWhiteSpace(descriptor))
         {
-            < 1 => 22,
-            > 99 => prefix % 100,
-            _ => prefix,
-        };
+            yield break;
+        }
 
-        return (prefix * 100 + 1, prefix * 100 + 99);
+        var portName = descriptor.Split('@', 2, StringSplitOptions.TrimEntries)[0].Trim();
+        if (!string.IsNullOrWhiteSpace(portName))
+        {
+            yield return portName;
+        }
     }
 
     internal static string RenderTerminalPreview(params string[] chunks)
