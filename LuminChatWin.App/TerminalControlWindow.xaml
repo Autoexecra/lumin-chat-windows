@@ -8,6 +8,8 @@
         Height="980"
         MinWidth="980"
         MinHeight="680"
+    UseLayoutRounding="True"
+    SnapsToDevicePixels="True"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="NavigationTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
@@ -112,18 +114,23 @@
 
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16" Margin="0,0,0,12">
                                     <StackPanel>
-                                        <TextBlock Text="PowerShell" FontSize="18" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="PowerShellTitleTextBox" Text="本地 PowerShell"/>
-                                        <TextBox x:Name="PowerShellProgramTextBox"/>
-                                        <TextBox x:Name="PowerShellArgsTextBox"/>
-                                        <TextBox x:Name="PowerShellWorkdirTextBox"/>
+                                        <TextBlock Text="串口" FontSize="18" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="SerialTitleTextBox" Text="串口会话"/>
+                                        <ComboBox x:Name="SerialPortComboBox" IsEditable="True"/>
+                                        <TextBox x:Name="SerialBaudRateTextBox" Text="115200"/>
                                         <StackPanel Orientation="Horizontal">
-                                            <CheckBox x:Name="PowerShellSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
-                                            <CheckBox x:Name="PowerShellApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
+                                            <TextBox x:Name="SerialParityTextBox" Text="None" Width="110" Margin="0,0,8,8"/>
+                                            <TextBox x:Name="SerialDataBitsTextBox" Text="8" Width="90" Margin="0,0,8,8"/>
+                                            <TextBox x:Name="SerialStopBitsTextBox" Text="One" Width="90" Margin="0,0,0,8"/>
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal">
-                                            <Button Content="保存配置" Click="SavePowerShellProfile_Click"/>
-                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenPowerShellProfile_Click"/>
+                                            <CheckBox x:Name="SerialSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
+                                            <CheckBox x:Name="SerialApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="刷新串口" Click="RefreshSerialPorts_Click"/>
+                                            <Button Content="保存配置" Style="{StaticResource SubtleButtonStyle}" Click="SaveSerialProfile_Click"/>
+                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenSerialProfile_Click"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
@@ -166,23 +173,18 @@
 
                                 <Border Background="{StaticResource PanelBrush}" CornerRadius="20" Padding="16">
                                     <StackPanel>
-                                        <TextBlock Text="串口" FontSize="18" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="SerialTitleTextBox" Text="串口会话"/>
-                                        <ComboBox x:Name="SerialPortComboBox" IsEditable="True"/>
-                                        <TextBox x:Name="SerialBaudRateTextBox" Text="115200"/>
+                                        <TextBlock Text="PowerShell" FontSize="18" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="PowerShellTitleTextBox" Text="本地 PowerShell"/>
+                                        <TextBox x:Name="PowerShellProgramTextBox"/>
+                                        <TextBox x:Name="PowerShellArgsTextBox"/>
+                                        <TextBox x:Name="PowerShellWorkdirTextBox"/>
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBox x:Name="SerialParityTextBox" Text="None" Width="110" Margin="0,0,8,8"/>
-                                            <TextBox x:Name="SerialDataBitsTextBox" Text="8" Width="90" Margin="0,0,8,8"/>
-                                            <TextBox x:Name="SerialStopBitsTextBox" Text="One" Width="90" Margin="0,0,0,8"/>
+                                            <CheckBox x:Name="PowerShellSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
+                                            <CheckBox x:Name="PowerShellApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal">
-                                            <CheckBox x:Name="SerialSshSharedCheckBox" Content="SSH 共享" IsChecked="True" Margin="0,4,16,10"/>
-                                            <CheckBox x:Name="SerialApiSharedCheckBox" Content="API 共享" IsChecked="True" Margin="0,4,0,10"/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Button Content="刷新串口" Click="RefreshSerialPorts_Click"/>
-                                            <Button Content="保存配置" Style="{StaticResource SubtleButtonStyle}" Click="SaveSerialProfile_Click"/>
-                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenSerialProfile_Click"/>
+                                            <Button Content="保存配置" Click="SavePowerShellProfile_Click"/>
+                                            <Button Content="保存并打开" Style="{StaticResource SubtleButtonStyle}" Click="SaveAndOpenPowerShellProfile_Click"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
@@ -218,7 +220,9 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                                         <Button Content="刷新目标会话" Click="RefreshAgentTargets_Click"/>
-                                        <TextBlock x:Name="AgentStatusTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" MaxHeight="86">
+                                            <TextBlock x:Name="AgentStatusTextBlock" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        </ScrollViewer>
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -236,7 +240,9 @@
                             <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
                                 <StackPanel>
                                     <TextBlock Text="当前状态" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="AgentSummaryTextBlock" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                    <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+                                        <TextBlock x:Name="AgentSummaryTextBlock" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                    </ScrollViewer>
                                 </StackPanel>
                             </Border>
                         </Grid>
@@ -270,7 +276,9 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                                         <Button Content="刷新目标会话" Click="RefreshPromptTargets_Click"/>
-                                        <TextBlock x:Name="PromptStatusTextBlock" Margin="0,10,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" MaxHeight="86">
+                                            <TextBlock x:Name="PromptStatusTextBlock" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        </ScrollViewer>
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -295,7 +303,9 @@
                             <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12">
                                 <StackPanel>
                                     <TextBlock Text="当前状态" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="PromptSummaryTextBlock" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                    <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+                                        <TextBlock x:Name="PromptSummaryTextBlock" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+                                    </ScrollViewer>
                                 </StackPanel>
                             </Border>
                         </Grid>
@@ -420,7 +430,18 @@
                                                                CaretBrush="#FFF5FBFF"
                                                                Background="Transparent"
                                                                BorderThickness="0"
-                                                               Padding="14,14,14,14"/>
+                                                               Padding="14,14,14,14">
+                                            <local:AnsiTerminalBox.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="复制" Click="TerminalCopy_Click"/>
+                                                    <MenuItem Header="复制全部" Click="TerminalCopyAll_Click"/>
+                                                    <MenuItem Header="全选" Click="TerminalSelectAll_Click"/>
+                                                    <Separator/>
+                                                    <MenuItem Header="粘贴" Click="TerminalPaste_Click" CommandParameter="{Binding}"/>
+                                                    <MenuItem Header="清屏" Click="TerminalClearScreen_Click" CommandParameter="{Binding}"/>
+                                                </ContextMenu>
+                                            </local:AnsiTerminalBox.ContextMenu>
+                                        </local:AnsiTerminalBox>
                                     </Border>
                                 </DataTemplate>
                             </TabControl.ContentTemplate>

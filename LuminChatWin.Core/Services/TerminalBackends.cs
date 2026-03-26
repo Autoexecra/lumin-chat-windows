@@ -207,7 +207,7 @@ internal sealed class SshTerminalBackend : ITerminalBackend
         try
         {
             _client.Connect();
-            _stream = _client.CreateShellStream("lumin-chat", 120, 40, 1200, 800, 1024);
+            _stream = _client.CreateShellStream("xterm-256color", 120, 40, 1200, 800, 1024);
             _readerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _readerTask = Task.Run(() => ReadLoopAsync(_readerCts.Token), _readerCts.Token);
             StatusReceived?.Invoke(this, $"Connected to {Descriptor}");

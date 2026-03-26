@@ -4,6 +4,7 @@ using System.IO.Ports;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using LuminChatWin.Core.Models;
@@ -51,7 +52,6 @@ public partial class TerminalControlWindow : Window
         _runtime.TerminalSessions.OutputReceived += TerminalSessions_OutputReceived;
         _runtime.ConfigChanged += Runtime_ConfigChanged;
         Closed += TerminalControlWindow_Closed;
-        Loaded += (_, _) => ClampWindowToDesktop();
 
         RefreshSerialPorts();
         RefreshProfiles();
@@ -729,6 +729,63 @@ public partial class TerminalControlWindow : Window
         {
             ShowError(ex);
         }
+    }
+
+    private void TerminalCopy_Click(object sender, RoutedEventArgs e)
+    {
+        var terminalBox = FindContextMenuTerminal(sender);
+        if (terminalBox is null || string.IsNullOrEmpty(terminalBox.Selection.Text))
+        {
+            return;
+        }
+
+        terminalBox.Copy();
+    }
+
+    private void TerminalCopyAll_Click(object sender, RoutedEventArgs e)
+    {
+        var terminalBox = FindContextMenuTerminal(sender);
+        if (terminalBox?.Document is null)
+        {
+            return;
+        }
+
+        var text = new TextRange(terminalBox.Document.ContentStart, terminalBox.Document.ContentEnd).Text;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            Clipboard.SetText(text);
+        }
+    }
+
+    private void TerminalSelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        FindContextMenuTerminal(sender)?.SelectAll();
+    }
+
+    private async void TerminalPaste_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetOpenSessionFromMenu(sender, out var session) || !Clipboard.ContainsText())
+        {
+            return;
+        }
+
+        var text = Clipboard.GetText();
+        if (!string.IsNullOrEmpty(text))
+        {
+            await SendTerminalInputAsync(session.SessionId, text);
+        }
+    }
+
+    private void TerminalClearScreen_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetOpenSessionFromMenu(sender, out var session))
+        {
+            return;
+        }
+
+        _runtime.TerminalSessions.ClearSessionOutput(session.SessionId);
+        RefreshOpenSessions(session.SessionId);
+        SetWindowStatus($"已清空当前会话显示：{session.Title}", isMuted: true);
     }
 
     private async Task CloseSessionAsync(string sessionId)
@@ -1431,6 +1488,13 @@ public partial class TerminalControlWindow : Window
         return !string.IsNullOrWhiteSpace(session.SessionId);
     }
 
+    private static bool TryGetOpenSessionFromMenu(object sender, out OpenTerminalSessionViewModel session)
+    {
+        session = (sender as MenuItem)?.CommandParameter as OpenTerminalSessionViewModel
+            ?? new OpenTerminalSessionViewModel(new TerminalSessionInfo());
+        return !string.IsNullOrWhiteSpace(session.SessionId);
+    }
+
     private string BuildCurrentCommandText(string sessionId)
     {
         var current = _runtime.TerminalSessions.GetCurrentCommandOutput(sessionId);
@@ -1582,6 +1646,15 @@ public partial class TerminalControlWindow : Window
         return null;
     }
 
+    private static AnsiTerminalBox? FindContextMenuTerminal(object sender)
+    {
+        return (sender as MenuItem)?.Parent switch
+        {
+            ContextMenu menu => menu.PlacementTarget as AnsiTerminalBox,
+            _ => null,
+        };
+    }
+
     private static bool SupportsBridge(TerminalSessionKind kind)
     {
         return kind is TerminalSessionKind.PowerShell or TerminalSessionKind.Ssh or TerminalSessionKind.Telnet or TerminalSessionKind.Serial;
@@ -1686,17 +1759,6 @@ public partial class TerminalControlWindow : Window
         }
 
         throw new InvalidOperationException($"No free SSH bridge port left in range {prefix}01-{prefix}99.");
-    }
-
-    private void ClampWindowToDesktop()
-    {
-        var workArea = SystemParameters.WorkArea;
-        MaxWidth = workArea.Width;
-        MaxHeight = workArea.Height;
-        Width = Math.Min(Width, workArea.Width);
-        Height = Math.Min(Height, workArea.Height);
-        Left = Math.Max(workArea.Left, workArea.Left + (workArea.Width - Width) / 2d);
-        Top = Math.Max(workArea.Top, workArea.Top + (workArea.Height - Height) / 2d);
     }
 
     private void SetWindowStatus(string message, bool isMuted)

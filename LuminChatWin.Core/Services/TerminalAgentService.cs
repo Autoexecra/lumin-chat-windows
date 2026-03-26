@@ -175,11 +175,11 @@ public sealed class TerminalAgentService
             new()
             {
                 Role = "system",
-                Content = BuildSystemPrompt(config, session),
+                Content = BuildSystemPrompt(config, session, mode),
             },
         };
 
-        foreach (var dialogueMessage in BuildDialogueMessages(dialogue))
+        foreach (var dialogueMessage in BuildDialogueMessages(dialogue, mode))
         {
             messages.Add(dialogueMessage);
         }
@@ -370,7 +370,7 @@ public sealed class TerminalAgentService
     /// <summary>
     /// Builds the system instructions that constrain the agent to terminal-centric execution.
     /// </summary>
-    private static string BuildSystemPrompt(AppConfig config, TerminalSessionInfo session)
+    private static string BuildSystemPrompt(AppConfig config, TerminalSessionInfo session, TerminalAgentMode mode)
     {
         var builder = new StringBuilder();
         builder.AppendLine("你是串口终端执行机器人。目标是控制当前会话终端，持续规划直到任务完成。")
@@ -396,6 +396,15 @@ public sealed class TerminalAgentService
             .AppendLine("- 如果当前信息不足且无法继续，请返回 complete=false，并在 final_message 中明确说明需要用户补充什么。")
             .AppendLine("输出协议固定为 three-part: thinking, content, tool_calls。其中 thinking 可为空，content 必须是上述 JSON，tool_calls 只在未完成时返回。")
             .AppendLine();
+
+        if (mode == TerminalAgentMode.Prompt)
+        {
+            builder.AppendLine("提示模式附加约束:")
+                .AppendLine("- 优先建议最短、最常见、最稳妥的单条命令。")
+                .AppendLine("- 除非任务明确需要，否则不要把多条命令用 &&、;、管道链成复杂长命令。")
+                .AppendLine("- 当前轮会提供最新终端转录内容，除资料库等系统上下文外，不要依赖旧的 assistant 对话来重复推理。")
+                .AppendLine();
+        }
 
         if (config.SecondaryServer.Enabled)
         {
@@ -581,11 +590,12 @@ public sealed class TerminalAgentService
         return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
     }
 
-    private static IReadOnlyList<PersistedChatMessage> BuildDialogueMessages(IList<TerminalAgentDialogueItem> dialogue)
+    private static IReadOnlyList<PersistedChatMessage> BuildDialogueMessages(IList<TerminalAgentDialogueItem> dialogue, TerminalAgentMode mode)
     {
         return dialogue
             .TakeLast(DialogueContextLimit)
             .Where(item => !string.IsNullOrWhiteSpace(item.Content))
+            .Where(item => mode != TerminalAgentMode.Prompt || string.Equals(NormalizeDialogueRole(item.Role), "system", StringComparison.Ordinal))
             .Select(item => new PersistedChatMessage
             {
                 Role = NormalizeDialogueRole(item.Role),

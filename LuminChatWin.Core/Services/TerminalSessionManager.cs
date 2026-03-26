@@ -113,6 +113,26 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
+    public void ClearSessionOutput(string sessionId)
+    {
+        var session = GetRequiredSession(sessionId);
+        lock (session.SyncRoot)
+        {
+            session.RenderedOutput.Clear();
+            session.RawOutput.Clear();
+            session.CurrentLineStartIndex = 0;
+            session.PendingCarriageReturn = false;
+            session.LastCommandOutputAt = null;
+            session.Info.LastActivityAt = DateTime.UtcNow.ToString("O");
+            session.History.Add(new TerminalHistoryEntry
+            {
+                Kind = TerminalHistoryEntryKind.System,
+                Text = "terminal output cleared",
+            });
+            TrimHistory(session.History);
+        }
+    }
+
     public async Task<TerminalSessionInfo> CreatePowerShellSessionAsync(TerminalPowerShellOptions options, CancellationToken cancellationToken = default)
     {
         var backend = new PowerShellTerminalBackend(options.Program, options.Arguments, options.WorkingDirectory);

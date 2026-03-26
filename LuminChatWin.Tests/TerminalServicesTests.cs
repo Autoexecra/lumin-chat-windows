@@ -215,6 +215,38 @@ public sealed class TerminalServicesTests
     }
 
     [Fact]
+    public async Task TerminalSessionManager_ClearSessionOutput_RemovesRenderedAndRawContent()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Clear PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = CreateTempDirectory(),
+        });
+
+        try
+        {
+            var result = await manager.ExecuteCommandAsync(session.SessionId, "Write-Output 'clear-me'", TimeSpan.FromSeconds(8));
+
+            Assert.True(result.Success);
+            Assert.Contains("clear-me", manager.GetRecentOutput(session.SessionId, 4000), StringComparison.OrdinalIgnoreCase);
+            Assert.NotEmpty(manager.GetRecentRawOutput(session.SessionId, 4000));
+
+            manager.ClearSessionOutput(session.SessionId);
+
+            Assert.DoesNotContain("clear-me", manager.GetRecentOutput(session.SessionId, 4000), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(string.Empty, manager.GetRecentRawOutput(session.SessionId, 4000));
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
     public async Task TerminalApiServer_ReturnsSessionsAndCommandOutput()
     {
         var config = AppConfig.CreateDefault();
@@ -465,6 +497,7 @@ public sealed class TerminalServicesTests
             Assert.True(result.Success);
             Assert.Contains("transcript-only", client.LastUserPrompt, StringComparison.Ordinal);
             Assert.DoesNotContain("this-should-not-appear", client.LastUserPrompt, StringComparison.Ordinal);
+            Assert.DoesNotContain(client.LastMessages, message => message.Role == "assistant" && message.Content.Contains("this-should-not-appear", StringComparison.Ordinal));
         }
         finally
         {
@@ -508,6 +541,7 @@ public sealed class TerminalServicesTests
 
             Assert.True(result.Success);
             Assert.Contains("用户追加内容", client.LastUserPrompt, StringComparison.Ordinal);
+            Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("提示模式附加约束", StringComparison.Ordinal));
             Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("系统追加内容", StringComparison.Ordinal));
             Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("资料库上下文", StringComparison.Ordinal));
         }
