@@ -10,6 +10,7 @@ namespace LuminChatWin.Core.Services;
 /// </summary>
 public sealed class TerminalAgentService
 {
+    private const int AutoExecutionDelayMilliseconds = 350;
     private static readonly HashSet<string> AllowedToolNames =
     [
         "run_shell_command",
@@ -179,7 +180,7 @@ public sealed class TerminalAgentService
             },
         };
 
-        foreach (var dialogueMessage in BuildDialogueMessages(dialogue, mode))
+        foreach (var dialogueMessage in BuildDialogueMessages(dialogue))
         {
             messages.Add(dialogueMessage);
         }
@@ -293,6 +294,10 @@ public sealed class TerminalAgentService
                     }
 
                     var commandResult = await ExecuteTerminalCommandToolAsync(session.SessionId, toolCall.Arguments, config, cancellationToken).ConfigureAwait(false);
+                    if (AutoExecutionDelayMilliseconds > 0)
+                    {
+                        await Task.Delay(AutoExecutionDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+                    }
                     progress?.Report(new AgentEvent
                     {
                         Type = AgentEventType.ToolResult,
@@ -397,15 +402,6 @@ public sealed class TerminalAgentService
             .AppendLine("输出协议固定为 three-part: thinking, content, tool_calls。其中 thinking 可为空，content 必须是上述 JSON，tool_calls 只在未完成时返回。")
             .AppendLine();
 
-        if (mode == TerminalAgentMode.Prompt)
-        {
-            builder.AppendLine("提示模式附加约束:")
-                .AppendLine("- 优先建议最短、最常见、最稳妥的单条命令。")
-                .AppendLine("- 除非任务明确需要，否则不要把多条命令用 &&、;、管道链成复杂长命令。")
-                .AppendLine("- 当前轮会提供最新终端转录内容，除资料库等系统上下文外，不要依赖旧的 assistant 对话来重复推理。")
-                .AppendLine();
-        }
-
         if (config.SecondaryServer.Enabled)
         {
             builder.AppendLine("辅助服务器:")
@@ -424,13 +420,22 @@ public sealed class TerminalAgentService
                 .AppendLine();
         }
 
-            var customSystemPrompt = PromptTemplateService.ResolveSystemPromptTemplate(config).Trim();
-            if (!string.IsNullOrWhiteSpace(customSystemPrompt))
-            {
-                builder.AppendLine("系统提示词追加:")
+        if (mode == TerminalAgentMode.Prompt)
+        {
+            builder.AppendLine("提示模式补充约束:")
+                .AppendLine("- 目标是只给出下一条最常用、最精简、最稳妥的命令。")
+                .AppendLine("- 优先输出单条命令，避免复合命令、管道链和 &&/; 拼接。")
+                .AppendLine("- 如果命令存在更短、更常见的写法，优先选择更短的写法。")
+                .AppendLine();
+        }
+
+        var customSystemPrompt = PromptTemplateService.ResolveSystemPromptTemplate(config).Trim();
+        if (!string.IsNullOrWhiteSpace(customSystemPrompt))
+        {
+            builder.AppendLine("系统提示词追加:")
                 .AppendLine(customSystemPrompt)
                 .AppendLine();
-            }
+        }
 
         return builder.ToString();
     }
@@ -590,12 +595,11 @@ public sealed class TerminalAgentService
         return $"执行命令: {result.Command}\n成功: {result.Success}\n超时: {result.TimedOut}\n输出:\n{output}";
     }
 
-    private static IReadOnlyList<PersistedChatMessage> BuildDialogueMessages(IList<TerminalAgentDialogueItem> dialogue, TerminalAgentMode mode)
+    private static IReadOnlyList<PersistedChatMessage> BuildDialogueMessages(IList<TerminalAgentDialogueItem> dialogue)
     {
         return dialogue
             .TakeLast(DialogueContextLimit)
             .Where(item => !string.IsNullOrWhiteSpace(item.Content))
-            .Where(item => mode != TerminalAgentMode.Prompt || string.Equals(NormalizeDialogueRole(item.Role), "system", StringComparison.Ordinal))
             .Select(item => new PersistedChatMessage
             {
                 Role = NormalizeDialogueRole(item.Role),

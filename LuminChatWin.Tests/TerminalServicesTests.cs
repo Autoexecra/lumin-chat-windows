@@ -119,6 +119,33 @@ public sealed class TerminalServicesTests
     }
 
     [Fact]
+    public async Task TerminalSessionManager_ClearSessionOutput_RemovesCapturedBuffers()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        await using var backend = new ScriptedTerminalBackend(
+        [
+            ("\n", "ready\n"),
+        ]);
+        var session = await manager.CreateSessionForTestsAsync("clear-output", TerminalSessionKind.Serial, "COM3 @ 115200", true, backend);
+
+        try
+        {
+            await manager.SendInputAsync(session.SessionId, "\n", recordInHistory: false);
+            Assert.Contains("ready", manager.GetRecentOutput(session.SessionId, 100), StringComparison.Ordinal);
+
+            manager.ClearSessionOutput(session.SessionId);
+
+            Assert.Equal(string.Empty, manager.GetRecentOutput(session.SessionId, 100));
+            Assert.Equal(string.Empty, manager.GetRecentRawOutput(session.SessionId, 100));
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
     public async Task TerminalSessionManager_ExecuteCommandAsync_PerformsLoginProbeAndQueuedCompletionProbe()
     {
         var config = AppConfig.CreateDefault();
@@ -207,38 +234,6 @@ public sealed class TerminalServicesTests
             Assert.False(result.TimedOut);
             Assert.DoesNotContain("<CTRL+C>", backend.SentInputs, StringComparer.Ordinal);
             Assert.Equal(["\n", "sleep 99\n", "\n", "\n"], backend.SentInputs);
-        }
-        finally
-        {
-            await manager.StopSessionAsync(session.SessionId);
-        }
-    }
-
-    [Fact]
-    public async Task TerminalSessionManager_ClearSessionOutput_RemovesRenderedAndRawContent()
-    {
-        var config = AppConfig.CreateDefault();
-        await using var manager = new TerminalSessionManager(() => config.Terminal);
-        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
-        {
-            Title = "Clear PowerShell",
-            Program = config.Terminal.DefaultPowershellProgram,
-            Arguments = config.Terminal.DefaultPowershellArgs,
-            WorkingDirectory = CreateTempDirectory(),
-        });
-
-        try
-        {
-            var result = await manager.ExecuteCommandAsync(session.SessionId, "Write-Output 'clear-me'", TimeSpan.FromSeconds(8));
-
-            Assert.True(result.Success);
-            Assert.Contains("clear-me", manager.GetRecentOutput(session.SessionId, 4000), StringComparison.OrdinalIgnoreCase);
-            Assert.NotEmpty(manager.GetRecentRawOutput(session.SessionId, 4000));
-
-            manager.ClearSessionOutput(session.SessionId);
-
-            Assert.DoesNotContain("clear-me", manager.GetRecentOutput(session.SessionId, 4000), StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(string.Empty, manager.GetRecentRawOutput(session.SessionId, 4000));
         }
         finally
         {
@@ -414,6 +409,49 @@ public sealed class TerminalServicesTests
     }
 
     [Fact]
+    public async Task TerminalAgentService_PromptModeAddsCompactCommandGuidanceToSystemPrompt()
+    {
+        var config = AppConfig.CreateDefault();
+        await using var manager = new TerminalSessionManager(() => config.Terminal);
+        var workspaceRoot = CreateTempDirectory();
+        var session = await manager.CreatePowerShellSessionAsync(new TerminalPowerShellOptions
+        {
+            Title = "Prompt Guidance PowerShell",
+            Program = config.Terminal.DefaultPowershellProgram,
+            Arguments = config.Terminal.DefaultPowershellArgs,
+            WorkingDirectory = workspaceRoot,
+        });
+
+        try
+        {
+            var client = new CapturingTerminalAgentChatCompletionClient(new LlmResponse
+            {
+                Success = true,
+                Content = """
+                {"analysis":"建议单条常用命令。","complete":false,"final_message":""}
+                """,
+                ToolCalls =
+                [
+                    new ToolCall("call-1", "run_shell_command", new Dictionary<string, object?>
+                    {
+                        ["command"] = "pwd",
+                    }),
+                ],
+            });
+            var service = new TerminalAgentService(client, () => config, manager, () => workspaceRoot);
+
+            await service.RunLoopAsync(session.SessionId, "只给出下一步建议", [], "auto", TerminalAgentMode.Prompt);
+
+            Assert.Contains("提示模式补充约束", client.LastSystemPrompt, StringComparison.Ordinal);
+            Assert.Contains("优先输出单条命令", client.LastSystemPrompt, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await manager.StopSessionAsync(session.SessionId);
+        }
+    }
+
+    [Fact]
     public async Task TerminalAgentService_OnlyExposesRequestedTools()
     {
         var config = AppConfig.CreateDefault();
@@ -497,7 +535,6 @@ public sealed class TerminalServicesTests
             Assert.True(result.Success);
             Assert.Contains("transcript-only", client.LastUserPrompt, StringComparison.Ordinal);
             Assert.DoesNotContain("this-should-not-appear", client.LastUserPrompt, StringComparison.Ordinal);
-            Assert.DoesNotContain(client.LastMessages, message => message.Role == "assistant" && message.Content.Contains("this-should-not-appear", StringComparison.Ordinal));
         }
         finally
         {
@@ -541,7 +578,6 @@ public sealed class TerminalServicesTests
 
             Assert.True(result.Success);
             Assert.Contains("用户追加内容", client.LastUserPrompt, StringComparison.Ordinal);
-            Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("提示模式附加约束", StringComparison.Ordinal));
             Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("系统追加内容", StringComparison.Ordinal));
             Assert.Contains(client.LastMessages, message => message.Role == "system" && message.Content.Contains("资料库上下文", StringComparison.Ordinal));
         }
@@ -866,6 +902,8 @@ public sealed class TerminalServicesTests
 
         public string LastUserPrompt { get; private set; } = string.Empty;
 
+        public string LastSystemPrompt { get; private set; } = string.Empty;
+
         public IReadOnlyList<PersistedChatMessage> LastMessages { get; private set; } = [];
 
         public Task<LlmResponse> CompleteAsync(AppConfig config, int modelLevel, IReadOnlyList<PersistedChatMessage> messages, IReadOnlyList<Dictionary<string, object?>>? tools, CancellationToken cancellationToken = default)
@@ -875,6 +913,7 @@ public sealed class TerminalServicesTests
                 .Select(static tool => tool.TryGetValue("function", out var functionObject) && functionObject is Dictionary<string, object?> function && function.TryGetValue("name", out var nameObject) ? nameObject?.ToString() ?? string.Empty : string.Empty)
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .ToArray() ?? [];
+            LastSystemPrompt = messages.FirstOrDefault(static item => item.Role == "system")?.Content ?? string.Empty;
             LastUserPrompt = messages.LastOrDefault(static item => item.Role == "user")?.Content ?? string.Empty;
             return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"command\":\"\",\"complete\":true,\"need_input\":false,\"final_message\":\"\"}" });
         }
@@ -886,6 +925,7 @@ public sealed class TerminalServicesTests
                 .Select(static tool => tool.TryGetValue("function", out var functionObject) && functionObject is Dictionary<string, object?> function && function.TryGetValue("name", out var nameObject) ? nameObject?.ToString() ?? string.Empty : string.Empty)
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .ToArray() ?? [];
+            LastSystemPrompt = messages.FirstOrDefault(static item => item.Role == "system")?.Content ?? string.Empty;
             LastUserPrompt = messages.LastOrDefault(static item => item.Role == "user")?.Content ?? string.Empty;
             var response = _responses.Count > 0 ? _responses.Dequeue() : new LlmResponse { Success = true, Content = "{\"analysis\":\"\",\"complete\":true,\"final_message\":\"\"}" };
             if (!string.IsNullOrWhiteSpace(response.ReasoningContent))

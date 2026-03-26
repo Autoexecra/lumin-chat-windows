@@ -8,8 +8,8 @@
         Height="980"
         MinWidth="980"
         MinHeight="680"
-    UseLayoutRounding="True"
-    SnapsToDevicePixels="True"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="NavigationTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
@@ -220,7 +220,7 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                                         <Button Content="刷新目标会话" Click="RefreshAgentTargets_Click"/>
-                                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" MaxHeight="86">
+                                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" MaxHeight="84">
                                             <TextBlock x:Name="AgentStatusTextBlock" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                         </ScrollViewer>
                                     </StackPanel>
@@ -276,7 +276,7 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                                         <Button Content="刷新目标会话" Click="RefreshPromptTargets_Click"/>
-                                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" MaxHeight="86">
+                                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" MaxHeight="84">
                                             <TextBlock x:Name="PromptStatusTextBlock" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                         </ScrollViewer>
                                     </StackPanel>
@@ -424,6 +424,8 @@
                                                                Loaded="TerminalViewport_Loaded"
                                                                PreviewTextInput="TerminalViewport_PreviewTextInput"
                                                                PreviewKeyDown="TerminalViewport_PreviewKeyDown"
+                                                               VerticalScrollBarVisibility="Auto"
+                                                               HorizontalScrollBarVisibility="Auto"
                                                                FontFamily="Consolas"
                                                                FontSize="13"
                                                                Foreground="#FFDDEFE7"
@@ -433,12 +435,12 @@
                                                                Padding="14,14,14,14">
                                             <local:AnsiTerminalBox.ContextMenu>
                                                 <ContextMenu>
-                                                    <MenuItem Header="复制" Click="TerminalCopy_Click"/>
-                                                    <MenuItem Header="复制全部" Click="TerminalCopyAll_Click"/>
-                                                    <MenuItem Header="全选" Click="TerminalSelectAll_Click"/>
+                                                    <MenuItem Header="复制" Click="CopyTerminalSelection_Click"/>
+                                                    <MenuItem Header="粘贴" Click="PasteTerminalClipboard_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="全选" Click="SelectAllTerminalText_Click"/>
                                                     <Separator/>
-                                                    <MenuItem Header="粘贴" Click="TerminalPaste_Click" CommandParameter="{Binding}"/>
-                                                    <MenuItem Header="清屏" Click="TerminalClearScreen_Click" CommandParameter="{Binding}"/>
+                                                    <MenuItem Header="发送 Ctrl+C" Click="InterruptTerminalCommand_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="清屏" Click="ClearTerminalScreen_Click" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 </ContextMenu>
                                             </local:AnsiTerminalBox.ContextMenu>
                                         </local:AnsiTerminalBox>

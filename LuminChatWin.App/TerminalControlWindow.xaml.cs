@@ -4,7 +4,6 @@ using System.IO.Ports;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using LuminChatWin.Core.Models;
@@ -470,8 +469,6 @@ public partial class TerminalControlWindow : Window
                 targetSessionId,
                 command,
                 TimeSpan.FromSeconds(Math.Max(3, _runtime.Config.Terminal.ExecApi.DefaultTimeoutSeconds)));
-            var executionNote = BuildExecutionNote(result);
-            _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "system", Content = executionNote });
             AddAgentTimeline("system", $"[提示模式] 已执行: {result.Command}");
             RefreshOpenSessions(targetSessionId);
 
@@ -703,6 +700,67 @@ public partial class TerminalControlWindow : Window
         await SendTerminalInputAsync(session.SessionId, payload);
     }
 
+    private void CopyTerminalSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menuItem || menuItem.Parent is not ContextMenu contextMenu || contextMenu.PlacementTarget is not RichTextBox richTextBox)
+        {
+            return;
+        }
+
+        var selectedText = richTextBox.Selection.Text;
+        if (!string.IsNullOrEmpty(selectedText))
+        {
+            Clipboard.SetText(selectedText);
+        }
+    }
+
+    private async void PasteTerminalClipboard_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as MenuItem)?.CommandParameter is not OpenTerminalSessionViewModel session || !Clipboard.ContainsText())
+        {
+            return;
+        }
+
+        var pastedText = Clipboard.GetText();
+        if (!string.IsNullOrEmpty(pastedText))
+        {
+            await SendTerminalInputAsync(session.SessionId, pastedText);
+        }
+    }
+
+    private void SelectAllTerminalText_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menuItem || menuItem.Parent is not ContextMenu contextMenu || contextMenu.PlacementTarget is not RichTextBox richTextBox)
+        {
+            return;
+        }
+
+        richTextBox.SelectAll();
+        richTextBox.Focus();
+    }
+
+    private async void InterruptTerminalCommand_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as MenuItem)?.CommandParameter is not OpenTerminalSessionViewModel session)
+        {
+            return;
+        }
+
+        await SendTerminalInputAsync(session.SessionId, "\u0003");
+    }
+
+    private void ClearTerminalScreen_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as MenuItem)?.CommandParameter is not OpenTerminalSessionViewModel session)
+        {
+            return;
+        }
+
+        _runtime.TerminalSessions.ClearSessionOutput(session.SessionId);
+        RefreshOpenSessions(session.SessionId);
+        SetWindowStatus($"已清空会话输出：{session.Title}", isMuted: true);
+    }
+
     private void NavigationTabControl_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (FindAncestor<TabItem>(e.OriginalSource as DependencyObject) is null)
@@ -729,63 +787,6 @@ public partial class TerminalControlWindow : Window
         {
             ShowError(ex);
         }
-    }
-
-    private void TerminalCopy_Click(object sender, RoutedEventArgs e)
-    {
-        var terminalBox = FindContextMenuTerminal(sender);
-        if (terminalBox is null || string.IsNullOrEmpty(terminalBox.Selection.Text))
-        {
-            return;
-        }
-
-        terminalBox.Copy();
-    }
-
-    private void TerminalCopyAll_Click(object sender, RoutedEventArgs e)
-    {
-        var terminalBox = FindContextMenuTerminal(sender);
-        if (terminalBox?.Document is null)
-        {
-            return;
-        }
-
-        var text = new TextRange(terminalBox.Document.ContentStart, terminalBox.Document.ContentEnd).Text;
-        if (!string.IsNullOrWhiteSpace(text))
-        {
-            Clipboard.SetText(text);
-        }
-    }
-
-    private void TerminalSelectAll_Click(object sender, RoutedEventArgs e)
-    {
-        FindContextMenuTerminal(sender)?.SelectAll();
-    }
-
-    private async void TerminalPaste_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetOpenSessionFromMenu(sender, out var session) || !Clipboard.ContainsText())
-        {
-            return;
-        }
-
-        var text = Clipboard.GetText();
-        if (!string.IsNullOrEmpty(text))
-        {
-            await SendTerminalInputAsync(session.SessionId, text);
-        }
-    }
-
-    private void TerminalClearScreen_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetOpenSessionFromMenu(sender, out var session))
-        {
-            return;
-        }
-
-        _runtime.TerminalSessions.ClearSessionOutput(session.SessionId);
-        RefreshOpenSessions(session.SessionId);
-        SetWindowStatus($"已清空当前会话显示：{session.Title}", isMuted: true);
     }
 
     private async Task CloseSessionAsync(string sessionId)
@@ -1156,7 +1157,7 @@ public partial class TerminalControlWindow : Window
             {
                 _agentTimeline[^1] = new AgentTimelineItemViewModel(role, last.Content + content, last.TimestampLabel);
                 AgentTimelineListBox.ScrollIntoView(_agentTimeline.LastOrDefault());
-                AgentSummaryTextBlock.Text = $"最近事件: {TrimForSingleLine(_agentTimeline[^1].Content)}";
+                AgentSummaryTextBlock.Text = $"最近事件: {_agentTimeline[^1].Content}";
                 return;
             }
         }
@@ -1204,7 +1205,6 @@ public partial class TerminalControlWindow : Window
 
         if (!string.IsNullOrWhiteSpace(plan.Analysis))
         {
-            _promptDialogue.Add(new TerminalAgentDialogueItem { Role = "assistant", Content = plan.Analysis });
             AddAgentTimeline("agent", $"[提示模式] {plan.Analysis}");
         }
 
@@ -1488,13 +1488,6 @@ public partial class TerminalControlWindow : Window
         return !string.IsNullOrWhiteSpace(session.SessionId);
     }
 
-    private static bool TryGetOpenSessionFromMenu(object sender, out OpenTerminalSessionViewModel session)
-    {
-        session = (sender as MenuItem)?.CommandParameter as OpenTerminalSessionViewModel
-            ?? new OpenTerminalSessionViewModel(new TerminalSessionInfo());
-        return !string.IsNullOrWhiteSpace(session.SessionId);
-    }
-
     private string BuildCurrentCommandText(string sessionId)
     {
         var current = _runtime.TerminalSessions.GetCurrentCommandOutput(sessionId);
@@ -1644,15 +1637,6 @@ public partial class TerminalControlWindow : Window
         }
 
         return null;
-    }
-
-    private static AnsiTerminalBox? FindContextMenuTerminal(object sender)
-    {
-        return (sender as MenuItem)?.Parent switch
-        {
-            ContextMenu menu => menu.PlacementTarget as AnsiTerminalBox,
-            _ => null,
-        };
     }
 
     private static bool SupportsBridge(TerminalSessionKind kind)

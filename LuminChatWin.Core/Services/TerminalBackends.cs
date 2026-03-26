@@ -65,6 +65,8 @@ internal sealed class PowerShellTerminalBackend : ITerminalBackend
             throw new InvalidOperationException("Unable to start PowerShell process.");
         }
 
+        _process.StandardInput.WriteLine("$PSStyle.OutputRendering='Ansi'");
+        _process.StandardInput.Flush();
         _readerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _stdoutTask = Task.Run(() => ReadStreamAsync(_process.StandardOutput, OutputReceived, _readerCts.Token), _readerCts.Token);
         _stderrTask = Task.Run(() => ReadStreamAsync(_process.StandardError, ErrorReceived, _readerCts.Token), _readerCts.Token);
@@ -132,7 +134,7 @@ internal sealed class PowerShellTerminalBackend : ITerminalBackend
 
     private ProcessStartInfo BuildStartInfo(string program, string arguments)
     {
-        return new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
             FileName = program,
             Arguments = arguments,
@@ -145,6 +147,12 @@ internal sealed class PowerShellTerminalBackend : ITerminalBackend
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+
+        startInfo.Environment["TERM"] = "xterm-256color";
+        startInfo.Environment["COLORTERM"] = "truecolor";
+        startInfo.Environment["CLICOLOR"] = "1";
+        startInfo.Environment["CLICOLOR_FORCE"] = "1";
+        return startInfo;
     }
 
     private static async Task ReadStreamAsync(StreamReader reader, EventHandler<string>? handler, CancellationToken cancellationToken)
@@ -207,7 +215,7 @@ internal sealed class SshTerminalBackend : ITerminalBackend
         try
         {
             _client.Connect();
-            _stream = _client.CreateShellStream("xterm-256color", 120, 40, 1200, 800, 1024);
+            _stream = _client.CreateShellStream("lumin-chat", 120, 40, 1200, 800, 1024);
             _readerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _readerTask = Task.Run(() => ReadLoopAsync(_readerCts.Token), _readerCts.Token);
             StatusReceived?.Invoke(this, $"Connected to {Descriptor}");

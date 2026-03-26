@@ -120,16 +120,14 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         {
             session.RenderedOutput.Clear();
             session.RawOutput.Clear();
+            session.History.Clear();
+            session.ActiveCommandBuffer = null;
+            session.ActiveCommandText = string.Empty;
+            session.ActiveCommandStartedAt = string.Empty;
+            session.LastCommandOutputAt = null;
             session.CurrentLineStartIndex = 0;
             session.PendingCarriageReturn = false;
-            session.LastCommandOutputAt = null;
             session.Info.LastActivityAt = DateTime.UtcNow.ToString("O");
-            session.History.Add(new TerminalHistoryEntry
-            {
-                Kind = TerminalHistoryEntryKind.System,
-                Text = "terminal output cleared",
-            });
-            TrimHistory(session.History);
         }
     }
 
